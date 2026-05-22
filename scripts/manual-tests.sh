@@ -134,7 +134,6 @@ step_login() {
   docker run --rm -it --platform "$PLATFORM" \
     -v "$VOL_MAIN":/home/coder/.vscode-cli \
     -e TUNNEL_NAME=my-test-tunnel \
-    -e TUNNEL_PERSIST_AUTH=1 \
     "$IMAGE"
 }
 
@@ -151,7 +150,6 @@ step_sigterm() {
   docker rm -f vscode-tunnel-sig >/dev/null 2>&1 || true
   docker run -d --name vscode-tunnel-sig --platform "$PLATFORM" \
     -v "$VOL_MAIN":/home/coder/.vscode-cli \
-    -e TUNNEL_PERSIST_AUTH=1 \
     "$IMAGE" >/dev/null
   echo "started; waiting 5s for tunnel to spin up"
   sleep 5
@@ -171,7 +169,6 @@ step_provider() {
   echo "::: TUNNEL_PROVIDER switch ($PLATFORM) — expect re-login prompt"
   docker run --rm -it --platform "$PLATFORM" \
     -v "$VOL_MAIN":/home/coder/.vscode-cli \
-    -e TUNNEL_PERSIST_AUTH=1 \
     -e TUNNEL_PROVIDER=microsoft \
     "$IMAGE"
 }

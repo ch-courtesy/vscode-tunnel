@@ -53,6 +53,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LC_ALL=C.UTF-8 \
     TUNNEL_NAME=vscode-tunnel \
     TUNNEL_PROVIDER=github \
+    TUNNEL_PERSIST_AUTH=1 \
     VSCODE_CLI_DATA_DIR=/home/coder/.vscode-cli
 
 RUN apt-get update \

@@ -90,27 +90,31 @@ docker run -d --name vscode-tunnel \
 
 인증 완료 후 `https://vscode.dev/tunnel/<TUNNEL_NAME>` 또는 데스크톱 VS Code의 "Remote Tunnels" 확장에서 접속한다.
 
-### ⚠️ 인증 영속성 (중요)
+### ⚠️ 인증 영속성 (기본 동작)
 
-VS Code CLI는 기본적으로 토큰을 **컨테이너 인스턴스의 keyring에서 derive한 키**로 암호화한다. 즉:
-- 같은 컨테이너 인스턴스가 살아 있으면 (`docker stop`/`start`) 인증 유지
-- `docker rm` 후 새 컨테이너로 같은 볼륨을 마운트하면 **복호화 불가 → 재인증 필요**
+이미지는 **`TUNNEL_PERSIST_AUTH=1`을 기본값으로** 설정해, 토큰을 평문 JSON으로 볼륨에 저장한다. 이 선택의 이유:
 
-이 기본 동작을 우회해 진짜 영속성을 원하면 **`TUNNEL_PERSIST_AUTH=1`** 을 켠다 — 토큰이 평문 JSON으로 볼륨에 저장된다. 트레이드오프:
-- ✅ 어떤 새 컨테이너에서도 같은 볼륨이면 재인증 불필요
-- ⚠️ 볼륨에 read 권한이 있는 호스트 프로세스/사용자가 토큰을 평문으로 읽을 수 있음 — 디렉터리는 0700이지만 root 또는 같은 uid는 우회 가능
-- 🔐 사용자 본인 책임. 호스트가 멀티유저거나 볼륨이 공유되는 환경에서는 권장하지 않음
+- VS Code CLI 본래 동작: 토큰을 *컨테이너 인스턴스의 keyring에서 derive한 키*로 암호화 → `docker rm` 후 새 컨테이너로 같은 볼륨을 붙이면 복호화 불가, 재인증 강제
+- 위 동작은 named volume의 영속성 약속을 사실상 무력화함 → 운영 현실과 맞지 않음
+- 그래서 본 이미지는 평문 저장을 디폴트로 채택. `$VSCODE_CLI_DATA_DIR`은 `0700`으로 강제
+
+**보안 트레이드오프**
+- ✅ 새 컨테이너에서도 같은 볼륨이면 재인증 불필요
+- ⚠️ 같은 uid(또는 root)로 볼륨에 read 권한이 있는 호스트 프로세스/사용자는 평문 토큰을 읽을 수 있음
+- 🔐 호스트가 멀티유저거나 볼륨이 공유되는 환경이면 opt-out 권장
+
+**Opt-out (암호화 모드 — 비영속성 감수)**
 
 ```bash
 docker run -d --name vscode-tunnel \
   -v vscode-tunnel-state:/home/coder/.vscode-cli \
-  -e TUNNEL_NAME=my-tunnel \
-  -e TUNNEL_PERSIST_AUTH=1 \
+  -e TUNNEL_PERSIST_AUTH=0 \
   --restart unless-stopped \
   vscode-tunnel:"$VERSION"
+# → 컨테이너가 살아있는 동안만 인증 유지. docker rm 시 재인증 필요.
 ```
 
-대안: 매 컨테이너 부팅 시 `VSCODE_CLI_ACCESS_TOKEN` env로 외부 secret store(예: docker secret, K8s secret)에서 토큰을 주입.
+또는 매 부팅 시 외부 secret(docker/K8s secret)에서 `VSCODE_CLI_ACCESS_TOKEN`을 주입하는 패턴도 가능.
 
 ### bind mount 권한 주의
 
@@ -133,7 +137,7 @@ docker run -d --name vscode-tunnel \
 |---|---|---|
 | `TUNNEL_NAME` | `vscode-tunnel` | 터널 이름 (vscode.dev/tunnel/`<name>`) |
 | `TUNNEL_PROVIDER` | `github` | 로그인 제공자 (`github` 또는 `microsoft`) — 변경 시 자동 재로그인 |
-| `TUNNEL_PERSIST_AUTH` | `0` | `1`/`true`로 켜면 토큰을 평문 JSON으로 볼륨에 저장해 컨테이너 재생성 시에도 인증 유지 (위 §인증 영속성 참고) |
+| `TUNNEL_PERSIST_AUTH` | `1` | 평문 JSON으로 토큰을 볼륨에 저장 — 컨테이너 재생성 시 인증 유지. `0`으로 끄면 암호화 모드 (위 §인증 영속성 참고) |
 | `VSCODE_CLI_ACCESS_TOKEN` | (없음) | 비대화식 로그인용 토큰 |
 | `VSCODE_CLI_DATA_DIR` | `/home/coder/.vscode-cli` | CLI 상태 디렉터리 |
 | `HEADLESS_RETRY_DELAY` | `30` | 헤드리스+미인증 시 exit 1 전 대기 초 (restart loop 완화) |

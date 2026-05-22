@@ -5,20 +5,21 @@ set -euo pipefail
 : "${TUNNEL_PROVIDER:=github}"
 : "${VSCODE_CLI_DATA_DIR:=$HOME/.vscode-cli}"
 : "${HEADLESS_RETRY_DELAY:=30}"
-: "${TUNNEL_PERSIST_AUTH:=0}"
+: "${TUNNEL_PERSIST_AUTH:=1}"
 
 export VSCODE_CLI_DATA_DIR
 mkdir -p "$VSCODE_CLI_DATA_DIR"
 chmod 0700 "$VSCODE_CLI_DATA_DIR"
 
-# VS Code CLI encrypts the on-disk auth token with a key derived from the
-# container instance — meaning auth does NOT survive `docker rm` (or any new
-# container) by default, even with a named volume. Opt-in plaintext storage
-# trades the per-instance encryption for actual cross-container persistence.
+# VS Code CLI encrypts on-disk auth tokens with a key derived from the
+# container instance — auth does NOT survive `docker rm` (or any new
+# container) by default. With TUNNEL_PERSIST_AUTH=1 (the image default) we
+# tell the CLI to store tokens as plaintext JSON so the volume actually
+# persists auth across container instances. To opt out (encrypted, but
+# non-portable), pass -e TUNNEL_PERSIST_AUTH=0.
 # See docs/PLAN.md §9 for the security trade-off discussion.
 if [[ "$TUNNEL_PERSIST_AUTH" == "1" || "$TUNNEL_PERSIST_AUTH" == "true" ]]; then
   export VSCODE_CLI_DISABLE_KEYCHAIN_ENCRYPT=1
-  echo ">>> TUNNEL_PERSIST_AUTH enabled: tokens stored as plaintext JSON in $VSCODE_CLI_DATA_DIR (mode 0700)."
 fi
 
 provider_marker="$VSCODE_CLI_DATA_DIR/.tunnel-provider"
