@@ -88,7 +88,29 @@ docker run -d --name vscode-tunnel \
   vscode-tunnel:"$VERSION"
 ```
 
-인증 완료 후 `https://vscode.dev/tunnel/<TUNNEL_NAME>` 또는 데스크톱 VS Code의 "Remote Tunnels" 확장에서 접속한다. 볼륨이 유지되는 한 재시작 시 재인증은 불필요하다.
+인증 완료 후 `https://vscode.dev/tunnel/<TUNNEL_NAME>` 또는 데스크톱 VS Code의 "Remote Tunnels" 확장에서 접속한다.
+
+### ⚠️ 인증 영속성 (중요)
+
+VS Code CLI는 기본적으로 토큰을 **컨테이너 인스턴스의 keyring에서 derive한 키**로 암호화한다. 즉:
+- 같은 컨테이너 인스턴스가 살아 있으면 (`docker stop`/`start`) 인증 유지
+- `docker rm` 후 새 컨테이너로 같은 볼륨을 마운트하면 **복호화 불가 → 재인증 필요**
+
+이 기본 동작을 우회해 진짜 영속성을 원하면 **`TUNNEL_PERSIST_AUTH=1`** 을 켠다 — 토큰이 평문 JSON으로 볼륨에 저장된다. 트레이드오프:
+- ✅ 어떤 새 컨테이너에서도 같은 볼륨이면 재인증 불필요
+- ⚠️ 볼륨에 read 권한이 있는 호스트 프로세스/사용자가 토큰을 평문으로 읽을 수 있음 — 디렉터리는 0700이지만 root 또는 같은 uid는 우회 가능
+- 🔐 사용자 본인 책임. 호스트가 멀티유저거나 볼륨이 공유되는 환경에서는 권장하지 않음
+
+```bash
+docker run -d --name vscode-tunnel \
+  -v vscode-tunnel-state:/home/coder/.vscode-cli \
+  -e TUNNEL_NAME=my-tunnel \
+  -e TUNNEL_PERSIST_AUTH=1 \
+  --restart unless-stopped \
+  vscode-tunnel:"$VERSION"
+```
+
+대안: 매 컨테이너 부팅 시 `VSCODE_CLI_ACCESS_TOKEN` env로 외부 secret store(예: docker secret, K8s secret)에서 토큰을 주입.
 
 ### bind mount 권한 주의
 
@@ -111,8 +133,10 @@ docker run -d --name vscode-tunnel \
 |---|---|---|
 | `TUNNEL_NAME` | `vscode-tunnel` | 터널 이름 (vscode.dev/tunnel/`<name>`) |
 | `TUNNEL_PROVIDER` | `github` | 로그인 제공자 (`github` 또는 `microsoft`) — 변경 시 자동 재로그인 |
+| `TUNNEL_PERSIST_AUTH` | `0` | `1`/`true`로 켜면 토큰을 평문 JSON으로 볼륨에 저장해 컨테이너 재생성 시에도 인증 유지 (위 §인증 영속성 참고) |
 | `VSCODE_CLI_ACCESS_TOKEN` | (없음) | 비대화식 로그인용 토큰 |
 | `VSCODE_CLI_DATA_DIR` | `/home/coder/.vscode-cli` | CLI 상태 디렉터리 |
+| `HEADLESS_RETRY_DELAY` | `30` | 헤드리스+미인증 시 exit 1 전 대기 초 (restart loop 완화) |
 
 ## 볼륨
 

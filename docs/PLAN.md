@@ -152,7 +152,7 @@ docker logs -f vscode-tunnel
 - [ ] Renovate PR이 dry-run에서 정상 매칭
 
 ## 9. 잠재 이슈 / 결정 보류 항목
-- **libsecret/keyring 부재**: 헤드리스 컨테이너엔 D-Bus 없음 → 토큰이 평문 파일로 fallback 저장됨. 완화책으로 `$VSCODE_CLI_DATA_DIR`을 0700으로 강제. 추가 보호(예: file-level encryption) 필요한지 결정 필요.
+- **인증 영속성 vs 평문 토큰**: VS Code CLI는 file-keychain fallback에서도 컨테이너 인스턴스 keyring 기반으로 토큰을 암호화한다 — 즉 named volume에 저장된 token.json은 새 컨테이너에서 복호화 불가. 해결: `VSCODE_CLI_DISABLE_KEYCHAIN_ENCRYPT=1`을 설정하면 평문 JSON으로 저장돼 cross-container 재사용 가능. entrypoint는 `TUNNEL_PERSIST_AUTH=1`로 opt-in. 트레이드오프: 디렉터리 0700이지만 같은 uid/root 호스트 사용자는 평문 토큰을 읽을 수 있음. 결정 필요: 기본값을 enable로 바꿀지, 또는 docker secret/K8s secret 기반 `VSCODE_CLI_ACCESS_TOKEN` 주입을 표준 권장 워크플로로 할지.
 - **device-code flow vs VSCODE_CLI_ACCESS_TOKEN**: 무인 부팅용 토큰 발급 절차/회전 정책 미정.
 - **라이선스 자동 동의**: `--accept-server-license-terms` 자동 부착 — 사용자 명시 동의 정책 결정 필요.
 - **insiders 채널 지원 여부**: stable만 운영할지, 양쪽 다 빌드할지.
