@@ -1,0 +1,37 @@
+# Example: extend vscode-tunnel with Claude Code CLI.
+#
+# Build:
+#   docker build -f examples/Dockerfile.with-claude-code \
+#     -t vscode-tunnel-claude:1.121.0 .
+#
+# Run (note the extra volume for ~/.claude state):
+#   docker run -d --name vscode-tunnel \
+#     -v vscode-tunnel-state:/home/coder/.vscode-cli \
+#     -v claude-code-state:/home/coder/.claude \
+#     -v "$PWD":/workspace \
+#     vscode-tunnel-claude:1.121.0
+#
+# Inside the tunneled VS Code terminal:
+#   claude /login    # one-time OAuth, persisted in the claude-code-state volume
+
+ARG VSCODE_TUNNEL_IMAGE=ghcr.io/ch-courtesy/vscode-tunnel:1.121.0
+FROM ${VSCODE_TUNNEL_IMAGE}
+
+USER root
+
+# Node.js (LTS) + Claude Code from npm. Pin a Claude Code version in real use
+# (e.g., @anthropic-ai/claude-code@1.2.3) to avoid silent upgrades.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        nodejs \
+        npm \
+    && npm install -g @anthropic-ai/claude-code \
+    && apt-get purge -y npm \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/* /root/.npm
+
+# Make sure the data dir exists with tight perms; volume mount will override
+# this but the seed defaults matter when no volume is supplied.
+RUN install -d -m 0700 -o coder -g coder /home/coder/.claude
+
+USER coder

@@ -1,0 +1,163 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - entrypoint.sh
+      - versions.json
+      - .dockerignore
+      - .github/workflows/build.yml
+      - scripts/**
+  pull_request:
+    paths:
+      - Dockerfile
+      - entrypoint.sh
+      - versions.json
+      - .dockerignore
+      - .github/workflows/build.yml
+      - scripts/**
+  workflow_dispatch:
+    inputs:
+      push_latest:
+        description: 'Also push :latest tag'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: read
+  packages: write
+  actions: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck entrypoint.sh scripts/*.sh
+
+      - name: update-vscode-sha256.sh dry-run (PR only)
+        if: github.event_name == 'pull_request'
+        run: |
+          before=$(sha256sum versions.json | awk '{print $1}')
+          ./scripts/update-vscode-sha256.sh
+          after=$(sha256sum versions.json | awk '{print $1}')
+          if [[ "$before" != "$after" ]]; then
+            echo "::warning::upstream VS Code stable advanced; versions.json would change"
+            git diff versions.json
+          else
+            echo "update script is idempotent against current versions.json"
+          fi
+          # Restore so subsequent steps see the committed values
+          git checkout -- versions.json
+
+  build:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read versions.json
+        id: vscode
+        run: |
+          {
+            echo "version=$(jq -r '.stable.version'        versions.json)"
+            echo "commit=$(jq -r '.stable.commit'          versions.json)"
+            echo "sha_x64=$(jq -r '.stable.sha256.x64'     versions.json)"
+            echo "sha_arm64=$(jq -r '.stable.sha256.arm64' versions.json)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Smoke test (amd64 + arm64)
+        run: |
+          version='${{ steps.vscode.outputs.version }}'
+          commit='${{ steps.vscode.outputs.commit }}'
+          for plat in linux/amd64 linux/arm64; do
+            tag="vscode-tunnel:smoke-${plat##*/}"
+            echo "::group::build $plat"
+            docker buildx build \
+              --platform "$plat" \
+              --build-arg VSCODE_COMMIT="$commit" \
+              --build-arg VSCODE_VERSION="$version" \
+              --build-arg VSCODE_SHA256_X64='${{ steps.vscode.outputs.sha_x64 }}' \
+              --build-arg VSCODE_SHA256_ARM64='${{ steps.vscode.outputs.sha_arm64 }}' \
+              --cache-from type=gha \
+              --load -t "$tag" .
+            echo "::endgroup::"
+
+            echo "::group::verify code --version on $plat"
+            out=$(docker run --rm --entrypoint code "$tag" --version)
+            echo "$out"
+            grep -qE "(^|[[:space:]])${version}([[:space:]]|$)" <<<"$out" \
+              || { echo "version mismatch: expected ${version}" >&2; exit 1; }
+            grep -q "commit ${commit}" <<<"$out" \
+              || { echo "commit mismatch: expected ${commit}" >&2; exit 1; }
+            echo "::endgroup::"
+
+            echo "::group::verify entrypoint refuses headless boot without auth on $plat"
+            if docker run --rm "$tag" >/tmp/entry.log 2>&1; then
+              echo "entrypoint should have exited non-zero without auth" >&2
+              cat /tmp/entry.log >&2
+              exit 1
+            fi
+            grep -q 'No VS Code tunnel auth state' /tmp/entry.log \
+              || { echo "expected auth-error message not found" >&2; cat /tmp/entry.log >&2; exit 1; }
+            echo "::endgroup::"
+          done
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GH_TOKEN }}
+
+      - name: Compute image tags
+        id: tags
+        if: github.event_name != 'pull_request'
+        run: |
+          version='${{ steps.vscode.outputs.version }}'
+          commit='${{ steps.vscode.outputs.commit }}'
+          short=${commit:0:7}
+          base="${REGISTRY}/${IMAGE_NAME,,}"
+          tags="${base}:${version},${base}:${version}-${short}"
+          minor=${version%.*}
+          major=${version%%.*}
+          tags="${tags},${base}:${minor},${base}:${major}"
+          if [[ "${{ github.event.inputs.push_latest }}" == 'true' ]]; then
+            tags="${tags},${base}:latest"
+          fi
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+
+      - name: Build multi-arch and push (non-PR only)
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            VSCODE_COMMIT=${{ steps.vscode.outputs.commit }}
+            VSCODE_VERSION=${{ steps.vscode.outputs.version }}
+            VSCODE_SHA256_X64=${{ steps.vscode.outputs.sha_x64 }}
+            VSCODE_SHA256_ARM64=${{ steps.vscode.outputs.sha_arm64 }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true

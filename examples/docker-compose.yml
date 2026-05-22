@@ -1,0 +1,37 @@
+# Compose-based deployment of vscode-tunnel + Claude Code.
+#
+# Usage (from repo root):
+#   docker compose -f examples/docker-compose.yml up -d --build
+#   docker compose -f examples/docker-compose.yml logs -f
+#   docker compose -f examples/docker-compose.yml down
+#
+# First-time auth: the first `up -d` will exit with the headless-no-auth error.
+# Run once with -it to complete device-code login, then re-run `up -d`:
+#   docker compose -f examples/docker-compose.yml run --rm -it tunnel
+#   # ... authenticate in browser, Ctrl+C ...
+#   docker compose -f examples/docker-compose.yml up -d
+#
+# Alternative: set VSCODE_CLI_ACCESS_TOKEN in a .env file next to this compose
+# file so the tunnel boots headless from the start.
+
+services:
+  tunnel:
+    build:
+      context: ..
+      dockerfile: examples/Dockerfile.with-claude-code
+    image: vscode-tunnel-claude:local
+    container_name: vscode-tunnel
+    restart: unless-stopped
+    environment:
+      TUNNEL_NAME: ${TUNNEL_NAME:-my-tunnel}
+      TUNNEL_PROVIDER: ${TUNNEL_PROVIDER:-github}
+      # Uncomment to boot headless without device-code:
+      # VSCODE_CLI_ACCESS_TOKEN: ${VSCODE_CLI_ACCESS_TOKEN}
+    volumes:
+      - vscode-tunnel-state:/home/coder/.vscode-cli
+      - claude-code-state:/home/coder/.claude
+      - ${WORKSPACE:-../}:/workspace
+
+volumes:
+  vscode-tunnel-state:
+  claude-code-state:
