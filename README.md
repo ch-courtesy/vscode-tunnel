@@ -149,6 +149,50 @@ docker run -d --name vscode-tunnel \
 | `/home/coder/.vscode-cli` | 터널 인증 토큰 + CLI 상태 (영속화 필수, 권한 0700) |
 | `/workspace` | 작업 디렉터리 — 호스트 디렉터리를 bind mount (위 권한 주의 참고) |
 
+## 이미지 확장 (Claude Code 등 추가 도구)
+
+base 이미지는 의도적으로 lean하게 유지한다. 추가 도구는 **다운스트림 Dockerfile**로 본 이미지 위에 쌓는 패턴이 권장:
+
+```dockerfile
+FROM ghcr.io/ch-courtesy/vscode-tunnel:1.121.0
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
+ && npm install -g @anthropic-ai/claude-code \
+ && rm -rf /var/lib/apt/lists/* /root/.npm
+USER coder
+```
+
+레포에 동작하는 예제 두 개:
+
+| 파일 | 내용 |
+|---|---|
+| [`examples/Dockerfile.with-claude-code`](examples/Dockerfile.with-claude-code) | Claude Code CLI만 추가 |
+| [`examples/Dockerfile.with-tools`](examples/Dockerfile.with-tools) | Claude Code + gh + ripgrep/fzf/jq 등 dev toolchain |
+
+빌드:
+```bash
+docker build -f examples/Dockerfile.with-claude-code -t vscode-tunnel-claude:1.121.0 .
+```
+
+### Claude Code 상태 영속화
+
+Claude Code는 `~/.claude/`에 OAuth 토큰/세션/설정을 저장한다. VS Code 인증과 마찬가지로 컨테이너 재생성을 견디려면 별도 볼륨이 필요:
+
+```bash
+docker run -d --name vscode-tunnel \
+  -v vscode-tunnel-state:/home/coder/.vscode-cli \
+  -v claude-code-state:/home/coder/.claude \
+  -v "$PWD":/workspace \
+  vscode-tunnel-claude:1.121.0
+```
+
+최초 로그인: vscode.dev 터미널에서 `claude /login` 한 번 실행. 이후 볼륨 유지되는 한 재인증 불필요.
+
+### 보안 메모
+
+- 다운스트림 이미지의 패키지는 base 이미지의 sha256 검증 + Renovate 추적 밖이다. 직접 버전 핀/SBOM 운영 권장.
+- `~/.claude/`도 평문 토큰이 저장될 수 있다. `install -d -m 0700`으로 권한 강제(예제 Dockerfile에 포함).
+
 ## VS Code 버전 관리
 
 `versions.json`이 핀된 stable 릴리스를 정의한다. `.github/workflows/update-vscode.yml`이 매주 월요일 09:00 UTC에 upstream을 확인해 새 릴리스가 있으면 sha256을 핀된 commit에서 직접 계산해 PR을 자동으로 연다.
