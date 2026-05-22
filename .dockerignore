@@ -1,0 +1,8 @@
+.git
+.gitignore
+.github
+.claude
+docs
+*.md
+LICENSE
+renovate.json

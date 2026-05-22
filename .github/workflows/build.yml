@@ -1,0 +1,99 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - entrypoint.sh
+      - versions.json
+      - .dockerignore
+      - .github/workflows/build.yml
+  pull_request:
+    paths:
+      - Dockerfile
+      - entrypoint.sh
+      - versions.json
+      - .dockerignore
+      - .github/workflows/build.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read versions.json
+        id: vscode
+        run: |
+          {
+            echo "version=$(jq -r '.stable.version'        versions.json)"
+            echo "commit=$(jq -r '.stable.commit'          versions.json)"
+            echo "sha_x64=$(jq -r '.stable.sha256.x64'     versions.json)"
+            echo "sha_arm64=$(jq -r '.stable.sha256.arm64' versions.json)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          version='${{ steps.vscode.outputs.version }}'
+          commit='${{ steps.vscode.outputs.commit }}'
+          short=${commit:0:7}
+          base="${REGISTRY}/${IMAGE_NAME,,}"
+          tags="${base}:${version},${base}:${version}-${short}"
+          minor=${version%.*}
+          major=${version%%.*}
+          if [[ "${{ github.event_name }}" != 'pull_request' && "${{ github.ref }}" == 'refs/heads/main' ]]; then
+            tags="${tags},${base}:${minor},${base}:${major},${base}:latest"
+          fi
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+
+      - name: Build (and push on main)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            VSCODE_COMMIT=${{ steps.vscode.outputs.commit }}
+            VSCODE_VERSION=${{ steps.vscode.outputs.version }}
+            VSCODE_SHA256_X64=${{ steps.vscode.outputs.sha_x64 }}
+            VSCODE_SHA256_ARM64=${{ steps.vscode.outputs.sha_arm64 }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test (amd64)
+        if: github.event_name == 'pull_request'
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --build-arg VSCODE_COMMIT='${{ steps.vscode.outputs.commit }}' \
+            --build-arg VSCODE_VERSION='${{ steps.vscode.outputs.version }}' \
+            --build-arg VSCODE_SHA256_X64='${{ steps.vscode.outputs.sha_x64 }}' \
+            --build-arg VSCODE_SHA256_ARM64='${{ steps.vscode.outputs.sha_arm64 }}' \
+            --load -t vscode-tunnel:smoke .
+          docker run --rm --entrypoint code vscode-tunnel:smoke --version

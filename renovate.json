@@ -1,0 +1,33 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":dependencyDashboard"
+  ],
+  "labels": ["dependencies"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": ["^versions\\.json$"],
+      "matchStrings": [
+        "\"version\":\\s*\"(?<currentValue>[^\"]+)\",\\s*\"commit\":\\s*\"(?<currentDigest>[a-f0-9]{40})\""
+      ],
+      "depNameTemplate": "microsoft/vscode",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^(?<version>\\d+\\.\\d+\\.\\d+)$"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchPackageNames": ["microsoft/vscode"],
+      "commitMessageTopic": "VS Code CLI",
+      "commitMessageExtra": "to {{newValue}} ({{newDigestShort}})",
+      "postUpgradeTasks": {
+        "commands": ["./scripts/update-vscode-sha256.sh"],
+        "fileFilters": ["versions.json"],
+        "executionMode": "update"
+      }
+    }
+  ]
+}
