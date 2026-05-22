@@ -4,6 +4,9 @@ VS Code tunnel 서버(`code tunnel`)를 컨테이너로 패키징한 이미지. 
 
 설계 배경과 의사결정은 [`docs/PLAN.md`](docs/PLAN.md) 참고.
 
+> **단일 개인 서버라면 Docker 없이 호스트에 직접 설치하는 편이 단순합니다** — [`docs/host-install.md`](docs/host-install.md) 참고 (`./scripts/host-install.sh` 한 줄).
+> Docker 경로는 멀티 머신 / 팀 공유 / 호스트 격리가 필요할 때 가치 있습니다.
+
 ## 빌드 (로컬)
 
 `versions.json`에 핀된 VS Code stable 빌드를 사용한다. 로컬에서는 `--load`가 단일 플랫폼만 지원하므로 호스트 아키텍처에 맞춰 하나만 적재한다.
