@@ -32,25 +32,28 @@
   - `org.opencontainers.image.version` = `${VSCODE_VERSION}`
   - `org.opencontainers.image.revision` = `${VSCODE_COMMIT}`
   - `org.opencontainers.image.source` = `https://github.com/microsoft/vscode`
-- `ENV TUNNEL_NAME=vscode-tunnel`
-- `VOLUME ["/home/coder/.vscode-cli", "/workspace"]`
+- `ENV TUNNEL_NAME=vscode-tunnel`, `TUNNEL_PROVIDER=github`, `VSCODE_CLI_DATA_DIR=/home/coder/.vscode-cli`
+- `VOLUME ["/home/coder/.vscode-cli"]` (작업공간 `/workspace`는 VOLUME 선언 제외 — bind mount 사용을 가정)
 - `WORKDIR /workspace`
-- `ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]`
+- `ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]` — tini가 PID 1로서 SIGTERM 전파/좀비 reaping 담당, entrypoint는 `exec`으로 `code tunnel` 호출
 
 ## 4. entrypoint.sh 로직
-- `TUNNEL_NAME` 환경변수로 터널 이름 결정
-- `$HOME/.vscode-cli` 디렉터리 존재 보장
-- 로그인 상태 미존재 시: device-code URL 안내 후 `code tunnel user login --provider github`
-- `code tunnel --accept-server-license-terms --name "$TUNNEL_NAME" --random-name false`
-- SIGTERM 시 graceful shutdown (trap)
+- `TUNNEL_NAME`/`TUNNEL_PROVIDER`/`VSCODE_CLI_DATA_DIR` 환경변수로 동작 결정
+- `$VSCODE_CLI_DATA_DIR`을 0700으로 보장 (token 평문 fallback 대비)
+- 프로바이더 marker 파일(`.tunnel-provider`)로 `TUNNEL_PROVIDER` 변경 감지 → 변경 시 자동 logout + 재로그인
+- 로그인 상태 미존재 시 분기:
+  - `VSCODE_CLI_ACCESS_TOKEN` 설정 시 → 비대화식 `code tunnel user login --access-token`
+  - TTY 존재 시 → device-code flow
+  - 그 외 → 명확한 에러 메시지 + `exit 1` (crash loop 방지를 위해 사용자에게 first-boot 안내)
+- `exec code tunnel --accept-server-license-terms --name "$TUNNEL_NAME"` — exec으로 PID 승계, tini가 신호 전파, 별도 trap 불필요
 
 ## 5. VS Code CLI 버전 관리 전략
 
 ### 5.1 핵심 원칙
 1. **commit SHA로 핀** — VS Code 릴리스의 1차 식별자는 commit SHA, 버전 번호는 사람이 읽기 위한 라벨
-2. **SHA256 검증** — 다운로드 후 체크섬 검증으로 supply-chain 방어
+2. **SHA256 검증** — 다운로드 후 체크섬 검증으로 supply-chain 방어. sha256은 **핀된 commit의 tarball을 직접 다운로드해 계산** (latest 포인터 의존 금지)
 3. **이미지 태그에 버전 + commit 동시 반영** — 어떤 VS Code 빌드인지 태그만 보고 추적 가능
-4. **Renovate 자동 PR로 정기 업데이트** — 수동 추적 제거
+4. **전용 GitHub Actions cron으로 자동 업데이트** — Renovate `customManagers` + `postUpgradeTasks` 조합은 `github-releases` 데이터소스가 digest 갱신을 지원하지 않고 hosted Renovate가 `allowedCommands` 허용 안 함 → 신뢰 불가. 대신 `.github/workflows/update-vscode.yml`가 매주 upstream을 확인해 PR을 자동으로 연다.
 
 ### 5.2 다운로드 URL 패턴
 ```
@@ -84,43 +87,34 @@ ARG VSCODE_SHA256_ARM64
 ```
 CI에서 `versions.json`을 읽어 `--build-arg`로 주입.
 
-### 5.5 자동 업데이트 (Renovate)
-`renovate.json`에 custom regex manager 추가:
-```jsonc
-{
-  "customManagers": [{
-    "customType": "regex",
-    "fileMatch": ["^versions\\.json$"],
-    "matchStrings": ["\"commit\":\\s*\"(?<currentDigest>[a-f0-9]{40})\""],
-    "depNameTemplate": "microsoft/vscode",
-    "datasourceTemplate": "github-releases",
-    "currentValueTemplate": "stable"
-  }]
-}
-```
-PR 생성 시 CI가 새 commit의 sha256을 fetch → `versions.json` 갱신 → 빌드 + 스모크 테스트 → 머지.
+### 5.5 자동 업데이트 (GitHub Actions cron)
+전용 워크플로 `.github/workflows/update-vscode.yml`이 매주 월요일 09:00 UTC에 동작:
+1. `scripts/update-vscode-sha256.sh` 실행 — `https://update.code.visualstudio.com/api/update/cli-linux-x64/stable/latest`에서 productVersion+commit 가져오기
+2. 해당 commit의 `cli-linux-x64`/`cli-linux-arm64` tarball을 직접 다운로드 → sha256 계산 (latest 포인터 재조회 금지)
+3. `versions.json` 재작성
+4. 변경 있으면 `peter-evans/create-pull-request@v6`로 PR 자동 생성 (`GH_TOKEN` 사용 — `GITHUB_TOKEN`은 PR-from-workflow가 후속 워크플로를 트리거 못 함)
 
-Renovate가 닿지 않는 경우 GitHub Actions cron이 `https://update.code.visualstudio.com/api/releases/stable` 폴링하는 대체 워크플로.
+Renovate(`renovate.json`)는 GitHub Actions/base 이미지 등 일반 의존성만 추적, VS Code customManager는 사용하지 않음.
 
 ### 5.6 이미지 태그 정책
 | 태그 | 의미 | 용도 |
 |---|---|---|
 | `:1.95.0` | VS Code 버전 | 일반 사용자 |
 | `:1.95.0-4949701` | 버전 + 단축 commit | 완전 재현 빌드 핀 |
-| `:1.95` / `:1` | semver float | 자동 패치 수신 |
-| `:latest` | 항상 최신 stable | 데모용 — 프로덕션 비권장 |
+| `:1.95` / `:1` | semver float | 자동 minor/patch 수신 — `:1`은 메이저 동일 minor 변동 수신함 주의 |
+| `:latest` | 항상 최신 stable | **자동 푸시하지 않음** — `workflow_dispatch` 입력 `push_latest=true`일 때만 푸시 |
 | `:insiders-<commit>` | insiders 채널 | 별도 워크플로 (선택) |
 
 ## 6. 운영 산출물
-- `Dockerfile`
-- `entrypoint.sh`
+- `Dockerfile` — multi-stage, sha256 검증, non-root, tini PID 1
+- `entrypoint.sh` — exec 기반 신호 전파, TTY/token 분기, provider marker
 - `versions.json` — VS Code 버전/commit/sha256 매핑
+- `scripts/update-vscode-sha256.sh` — upstream API + 핀된 commit tarball 다운로드로 sha256 계산
 - `.dockerignore` — `.git`, `*.md`, `docs/` 제외
-- `docker-compose.yml` (선택) — 볼륨/환경변수/재시작 정책 샘플
-- `renovate.json` — 자동 업데이트 설정
-- `.github/workflows/build.yml` — 멀티 아키텍처 빌드 + 푸시
-- `.github/workflows/update-vscode.yml` — (선택) Renovate 대체 cron
-- `README.md` 갱신 — 빌드/실행/최초 로그인 방법
+- `renovate.json` — 일반 의존성(Actions, base 이미지) 추적
+- `.github/workflows/build.yml` — shellcheck → smoke (amd64+arm64 QEMU) → push
+- `.github/workflows/update-vscode.yml` — 주간 cron + 수동 트리거로 versions.json 갱신 PR
+- `README.md` — 빌드/실행/최초 로그인/bind mount 권한 안내
 
 ## 7. 빌드/실행 예시
 ```bash
@@ -158,11 +152,12 @@ docker logs -f vscode-tunnel
 - [ ] Renovate PR이 dry-run에서 정상 매칭
 
 ## 9. 잠재 이슈 / 결정 보류 항목
-- **libsecret/keyring 부재**: 헤드리스 컨테이너엔 D-Bus 없음 → 토큰이 평문 파일로 fallback 저장됨(볼륨에 보관). 이게 허용 가능한 보안 수준인지 결정 필요.
-- **device-code flow 강제**: 완전 무인 부팅 불가 — 최초 1회 브라우저 인증 필요.
-- **라이선스 자동 동의**: `--accept-server-license-terms` 자동 부착 정책.
+- **libsecret/keyring 부재**: 헤드리스 컨테이너엔 D-Bus 없음 → 토큰이 평문 파일로 fallback 저장됨. 완화책으로 `$VSCODE_CLI_DATA_DIR`을 0700으로 강제. 추가 보호(예: file-level encryption) 필요한지 결정 필요.
+- **device-code flow vs VSCODE_CLI_ACCESS_TOKEN**: 무인 부팅용 토큰 발급 절차/회전 정책 미정.
+- **라이선스 자동 동의**: `--accept-server-license-terms` 자동 부착 — 사용자 명시 동의 정책 결정 필요.
 - **insiders 채널 지원 여부**: stable만 운영할지, 양쪽 다 빌드할지.
-- **`:latest` 태그 유지 여부**: 편의 vs 비재현성.
+- **`:1` 메이저 floating 태그**: 메이저 동일 minor 변동까지 수신 — 사용자 안내 정책 결정 필요.
+- **bind mount uid mismatch**: README에 `--user $(id -u):$(id -g)` 우회 안내했으나 가이드 충분성 검토 필요.
 
 ## 10. 작업 순서
 1. `versions.json` 초기값 작성 (현재 stable commit + sha256 조사)

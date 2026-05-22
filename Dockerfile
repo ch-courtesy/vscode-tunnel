@@ -18,8 +18,9 @@ RUN set -eux; \
       arm64) arch=arm64; expected_sha="$VSCODE_SHA256_ARM64" ;; \
       *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
     esac; \
-    if [ -z "$VSCODE_COMMIT" ] || [ -z "$expected_sha" ]; then \
-      echo "VSCODE_COMMIT and matching VSCODE_SHA256_* build args are required" >&2; \
+    if [ -z "$VSCODE_COMMIT" ] || [ "$VSCODE_COMMIT" = "null" ] \
+       || [ -z "$expected_sha" ] || [ "$expected_sha" = "null" ]; then \
+      echo "VSCODE_COMMIT and matching VSCODE_SHA256_* build args are required (got commit='$VSCODE_COMMIT', sha='$expected_sha')" >&2; \
       exit 1; \
     fi; \
     url="https://update.code.visualstudio.com/commit:${VSCODE_COMMIT}/cli-linux-${arch}/stable"; \
@@ -54,7 +55,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
-        curl \
         git \
         openssh-client \
         locales \
@@ -63,6 +63,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --shell /bin/bash --uid 1000 coder \
     && mkdir -p /workspace "$VSCODE_CLI_DATA_DIR" \
+    && chmod 0700 "$VSCODE_CLI_DATA_DIR" \
     && chown -R coder:coder /workspace "$VSCODE_CLI_DATA_DIR"
 
 COPY --from=fetcher /out/code /usr/local/bin/code
@@ -71,6 +72,6 @@ RUN chmod +x /usr/local/bin/code /usr/local/bin/entrypoint.sh
 
 USER coder
 WORKDIR /workspace
-VOLUME ["/home/coder/.vscode-cli", "/workspace"]
+VOLUME ["/home/coder/.vscode-cli"]
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]

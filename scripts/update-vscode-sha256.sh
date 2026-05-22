@@ -1,31 +1,40 @@
 #!/usr/bin/env bash
-# Fetch sha256 for the current commit pinned in versions.json and update the file in-place.
-# Run after Renovate bumps the version/commit fields.
+# Fetch upstream VS Code stable metadata and write versions.json.
+# sha256 is computed from the actual tarball at `commit:<sha>/cli-linux-<arch>/stable`,
+# not from a "latest" pointer — so the sha256 always matches the pinned commit.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-commit=$(jq -r '.stable.commit' versions.json)
-if [[ -z "$commit" || "$commit" == "null" ]]; then
-  echo "versions.json has no stable.commit" >&2
-  exit 1
-fi
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+meta=$(curl -fsSL --retry 3 --retry-delay 2 \
+  'https://update.code.visualstudio.com/api/update/cli-linux-x64/stable/latest')
+version=$(jq -er '.productVersion' <<<"$meta")
+commit=$(jq -er '.version' <<<"$meta")
+echo "Upstream stable: ${version} @ ${commit}"
 
 fetch_sha() {
   local arch=$1
-  curl -fsSL "https://update.code.visualstudio.com/api/update/cli-linux-${arch}/stable/latest" \
-    | jq -er '.sha256hash'
+  local url="https://update.code.visualstudio.com/commit:${commit}/cli-linux-${arch}/stable"
+  local out="${workdir}/cli-${arch}.tar.gz"
+  curl -fsSL --retry 3 --retry-delay 2 -o "$out" "$url"
+  sha256sum "$out" | awk '{print $1}'
 }
 
 sha_x64=$(fetch_sha x64)
 sha_arm64=$(fetch_sha arm64)
+echo "sha256.x64   = ${sha_x64}"
+echo "sha256.arm64 = ${sha_arm64}"
 
-tmp=$(mktemp)
-jq \
-  --arg sx "$sha_x64" \
-  --arg sa "$sha_arm64" \
-  '.stable.sha256.x64 = $sx | .stable.sha256.arm64 = $sa' \
-  versions.json > "$tmp"
-mv "$tmp" versions.json
+jq -n \
+  --arg version "$version" \
+  --arg commit "$commit" \
+  --arg sha_x64 "$sha_x64" \
+  --arg sha_arm64 "$sha_arm64" \
+  '{stable: {version: $version, commit: $commit, sha256: {x64: $sha_x64, arm64: $sha_arm64}}}' \
+  > versions.json
 
-echo "Updated versions.json sha256 for commit ${commit:0:7}"
+echo "Wrote versions.json:"
+cat versions.json
