@@ -12,6 +12,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 RUN set -eux; \
     case "$TARGETARCH" in \
       amd64) arch=x64;   expected_sha="$VSCODE_SHA256_X64"  ;; \
@@ -42,7 +44,8 @@ LABEL org.opencontainers.image.title="vscode-tunnel" \
       org.opencontainers.image.description="VS Code tunnel server (code tunnel) packaged as a container" \
       org.opencontainers.image.version="${VSCODE_VERSION}" \
       org.opencontainers.image.revision="${VSCODE_COMMIT}" \
-      org.opencontainers.image.source="https://github.com/microsoft/vscode" \
+      org.opencontainers.image.source="https://github.com/ch-courtesy/vscode-tunnel" \
+      org.opencontainers.image.url="https://github.com/microsoft/vscode" \
       org.opencontainers.image.licenses="MIT"
 
 ENV DEBIAN_FRONTEND=noninteractive \

@@ -4,6 +4,7 @@ set -euo pipefail
 : "${TUNNEL_NAME:=vscode-tunnel}"
 : "${TUNNEL_PROVIDER:=github}"
 : "${VSCODE_CLI_DATA_DIR:=$HOME/.vscode-cli}"
+: "${HEADLESS_RETRY_DELAY:=30}"
 
 export VSCODE_CLI_DATA_DIR
 mkdir -p "$VSCODE_CLI_DATA_DIR"
@@ -15,8 +16,7 @@ needs_login=0
 if [[ -f "$provider_marker" ]]; then
   prev=$(cat "$provider_marker")
   if [[ "$prev" != "$TUNNEL_PROVIDER" ]]; then
-    echo ">>> TUNNEL_PROVIDER changed: ${prev} -> ${TUNNEL_PROVIDER}. Forcing re-login."
-    code tunnel user logout >/dev/null 2>&1 || true
+    echo ">>> TUNNEL_PROVIDER changed: ${prev} -> ${TUNNEL_PROVIDER}. Will re-login."
     needs_login=1
   fi
 fi
@@ -28,12 +28,8 @@ fi
 if (( needs_login == 1 )); then
   if [[ -n "${VSCODE_CLI_ACCESS_TOKEN:-}" ]]; then
     echo ">>> Logging in non-interactively via VSCODE_CLI_ACCESS_TOKEN (provider: ${TUNNEL_PROVIDER})."
-    code tunnel user login \
-      --provider "$TUNNEL_PROVIDER" \
-      --access-token "$VSCODE_CLI_ACCESS_TOKEN"
   elif [[ -t 0 || -t 1 ]]; then
-    echo ">>> No VS Code tunnel auth state found. Starting device-code login (provider: ${TUNNEL_PROVIDER})."
-    code tunnel user login --provider "$TUNNEL_PROVIDER"
+    echo ">>> No VS Code tunnel auth state. Starting device-code login (provider: ${TUNNEL_PROVIDER})."
   else
     cat >&2 <<EOF
 ERROR: No VS Code tunnel auth state and no TTY for interactive login.
@@ -43,11 +39,27 @@ First-time setup requires one of:
       docker run -it --rm -v <vol>:/home/coder/.vscode-cli <image>
   - Or set VSCODE_CLI_ACCESS_TOKEN (provider: ${TUNNEL_PROVIDER}) for headless boot.
 
-Exiting. If you used --restart unless-stopped, disable it until first login is complete
-to avoid burning auth requests in a tight loop.
+Sleeping ${HEADLESS_RETRY_DELAY}s before exit to throttle restart-policy loops
+(set HEADLESS_RETRY_DELAY=0 to disable).
 EOF
+    if [[ "$HEADLESS_RETRY_DELAY" -gt 0 ]]; then
+      sleep "$HEADLESS_RETRY_DELAY"
+    fi
     exit 1
   fi
+
+  # Let `code tunnel user login --provider X` handle identity replacement.
+  # Not calling explicit `logout` first: if login fails (network blip,
+  # cancelled device-code), the previous session stays usable. The marker
+  # is only updated on success, so a partial failure retries next boot.
+  if [[ -n "${VSCODE_CLI_ACCESS_TOKEN:-}" ]]; then
+    code tunnel user login \
+      --provider "$TUNNEL_PROVIDER" \
+      --access-token "$VSCODE_CLI_ACCESS_TOKEN"
+  else
+    code tunnel user login --provider "$TUNNEL_PROVIDER"
+  fi
+
   printf '%s' "$TUNNEL_PROVIDER" > "$provider_marker"
 fi
 

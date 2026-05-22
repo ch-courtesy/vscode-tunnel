@@ -30,6 +30,14 @@ docker buildx build \
 
 멀티 아키텍처 빌드 및 GHCR 푸시는 CI에서 처리한다 — [`.github/workflows/build.yml`](.github/workflows/build.yml).
 
+### CI secrets
+
+| Secret | 권장 권한 | 사용처 |
+|---|---|---|
+| `GH_TOKEN` | `repo` + `workflow` + `write:packages` (PAT 또는 fine-grained: Contents/Pull requests/Workflows Read+Write, Packages Write) | `build.yml`의 GHCR 푸시, `update-vscode.yml`의 자동 PR 생성 (`GITHUB_TOKEN`은 PR-from-workflow가 후속 CI를 트리거 못 함) |
+
+`GH_TOKEN`은 Settings → Secrets and variables → Actions에 저장한다. fine-grained PAT 권장 — 만료일과 레포 스코프 제한 가능.
+
 ## 실행
 
 ```bash

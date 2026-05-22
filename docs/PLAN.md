@@ -158,6 +158,8 @@ docker logs -f vscode-tunnel
 - **insiders 채널 지원 여부**: stable만 운영할지, 양쪽 다 빌드할지.
 - **`:1` 메이저 floating 태그**: 메이저 동일 minor 변동까지 수신 — 사용자 안내 정책 결정 필요.
 - **bind mount uid mismatch**: README에 `--user $(id -u):$(id -g)` 우회 안내했으나 가이드 충분성 검토 필요.
+- **`GH_TOKEN` 스코프 / 회전**: README에 권장 권한(repo+workflow+write:packages 또는 fine-grained 동등) 명시. PAT 만료/회전 자동화 정책 미정.
+- **SBOM/provenance 검증 정책**: 이미지에 부착하지만 검증(cosign 등) 절차는 별도 미정.
 
 ## 10. 작업 순서
 1. `versions.json` 초기값 작성 (현재 stable commit + sha256 조사)
