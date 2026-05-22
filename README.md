@@ -165,17 +165,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
 USER coder
 ```
 
-레포에 동작하는 예제 두 개:
+레포에 동작하는 예제:
 
 | 파일 | 내용 |
 |---|---|
 | [`examples/Dockerfile.with-claude-code`](examples/Dockerfile.with-claude-code) | Claude Code CLI만 추가 |
 | [`examples/Dockerfile.with-tools`](examples/Dockerfile.with-tools) | Claude Code + gh + ripgrep/fzf/jq 등 dev toolchain |
+| [`examples/docker-compose.yml`](examples/docker-compose.yml) | 위 with-claude-code 빌드 + 볼륨/환경변수 일괄 관리 |
 
-빌드:
+직접 빌드:
 ```bash
 docker build -f examples/Dockerfile.with-claude-code -t vscode-tunnel-claude:1.121.0 .
 ```
+
+Compose로 한 번에 (권장 — 볼륨/재시작 정책까지 선언):
+```bash
+# 첫 부팅: 인터랙티브로 device-code 로그인
+docker compose -f examples/docker-compose.yml run --rm -it tunnel
+# 인증 후 Ctrl+C, 곧바로 백그라운드 기동
+docker compose -f examples/docker-compose.yml up -d --build
+docker compose -f examples/docker-compose.yml logs -f
+```
+
+`TUNNEL_NAME`, `WORKSPACE` 등은 `.env` 파일로 오버라이드 가능. 자세한 옵션은 compose 파일의 상단 주석 참고.
 
 ### Claude Code 상태 영속화
 

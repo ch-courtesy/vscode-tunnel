@@ -36,6 +36,22 @@ systemctl --user stop vscode-tunnel        # 중지
 code tunnel --accept-server-license-terms --name $USER-tunnel
 ```
 
+## Uninstall
+
+```bash
+./scripts/host-uninstall.sh              # 바이너리 + systemd 유닛 제거, 상태 보존
+./scripts/host-uninstall.sh --purge      # 위 + ~/.vscode-cli 까지 삭제 (재인증/재다운로드 필요)
+./scripts/host-uninstall.sh --keep-binary # 유닛/터널 등록만 제거, 바이너리는 둠
+```
+
+Uninstall이 하는 일:
+1. `systemctl --user stop/disable vscode-tunnel.service` + 유닛 파일 삭제
+2. `code tunnel kill` (실행 중인 터널 정지) + `tunnel unregister` (서버 측 등록 해제) + `tunnel user logout`
+3. `$PREFIX/bin/code` 바이너리 삭제 (`--keep-binary` 시 보존)
+4. `--purge` 시 `~/.vscode-cli` 통째 삭제
+
+`PREFIX=/usr/local`로 설치했다면 uninstall에도 같은 `PREFIX`를 넘기세요.
+
 ## 업그레이드
 
 `versions.json`이 갱신되면 (수동 또는 `update-vscode.yml` 자동 PR로) 동일 스크립트를 다시 실행:
