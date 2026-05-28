@@ -1,0 +1,59 @@
+# Example: extend vscode-tunnel with Claude Code and Codex CLIs (native installers).
+#
+# Build:
+#   docker build -f examples/Dockerfile.with-agents \
+#     -t vscode-tunnel-agents:1.121.0 .
+#
+# Run (note the extra volumes for ~/.claude and ~/.codex state):
+#   docker run -d --name vscode-tunnel \
+#     -v vscode-tunnel-state:/home/coder/.vscode-cli \
+#     -v claude-code-state:/home/coder/.claude \
+#     -v codex-state:/home/coder/.codex \
+#     -v "$PWD":/workspace \
+#     vscode-tunnel-agents:1.121.0
+#
+# Inside the tunneled VS Code terminal:
+#   claude /login    # one-time OAuth, persisted in the claude-code-state volume
+#   codex login      # one-time OAuth, persisted in the codex-state volume
+
+ARG VSCODE_TUNNEL_IMAGE=ghcr.io/ch-courtesy/vscode-tunnel:1.121.0
+FROM ${VSCODE_TUNNEL_IMAGE}
+
+USER root
+
+# curl for the native installer. The runtime image ships ca-certificates but
+# not curl. No Node.js is needed: the installer drops the same standalone
+# binary that npm would, and the claude binary does not invoke Node at runtime.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Seed agent state dirs with tight perms; mounted volumes override these,
+# but the defaults matter when no volume is supplied.
+RUN install -d -m 0700 -o coder -g coder /home/coder/.claude \
+ && install -d -m 0700 -o coder -g coder /home/coder/.codex
+
+# Install as the coder user so binaries land in /home/coder/.local/bin
+# (both installers target $HOME/.local). Latest channel; background
+# auto-updates stay enabled and write to the coder-owned ~/.local dirs.
+ENV HOME=/home/coder
+USER coder
+RUN curl -fsSL https://claude.ai/install.sh | bash
+
+# Codex CLI: bypass install.sh (its SHA lookup is currently broken) and drop
+# the standalone musl binary straight into ~/.local/bin. Multi-arch aware.
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+      x86_64|amd64)  target="x86_64-unknown-linux-musl"  ;; \
+      aarch64|arm64) target="aarch64-unknown-linux-musl" ;; \
+      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+    esac; \
+    mkdir -p "$HOME/.local/bin"; \
+    curl -fsSL "https://github.com/openai/codex/releases/latest/download/codex-${target}.tar.gz" \
+      | tar -xz -C "$HOME/.local/bin"; \
+    mv "$HOME/.local/bin/codex-${target}" "$HOME/.local/bin/codex"; \
+    chmod +x "$HOME/.local/bin/codex"
+
+# Put the native install dir on PATH for the tunneled terminal.
+ENV PATH=/home/coder/.local/bin:$PATH
