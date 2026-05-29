@@ -18,6 +18,7 @@
 #   DOCKERFILE  — path to Dockerfile (default: examples/Dockerfile.with-agents)
 #   IMAGE       — image tag to build/use  (default: vscode-tunnel-claude:local)
 #   TUNNEL_NAME, TUNNEL_PROVIDER, WORKSPACE, VSCODE_CLI_ACCESS_TOKEN
+#   GIT_USER_NAME, GIT_USER_EMAIL — git commit identity inside the container
 
 services:
   tunnel:
@@ -32,13 +33,31 @@ services:
       TUNNEL_PROVIDER: ${TUNNEL_PROVIDER:-github}
       # Uncomment to boot headless without device-code:
       # VSCODE_CLI_ACCESS_TOKEN: ${VSCODE_CLI_ACCESS_TOKEN}
+      # Git commit identity (gh auth covers push/pull, not commit identity).
+      # Soft default: if unset, the tunnel still boots and only `git commit`
+      # fails with git's "tell me who you are" message. To instead make the
+      # container REFUSE to start until identity is set, swap `:-` for
+      # `:?set GIT_USER_NAME/EMAIL in .env` on these lines.
+      GIT_AUTHOR_NAME:     ${GIT_USER_NAME:-}
+      GIT_AUTHOR_EMAIL:    ${GIT_USER_EMAIL:-}
+      GIT_COMMITTER_NAME:  ${GIT_USER_NAME:-}
+      GIT_COMMITTER_EMAIL: ${GIT_USER_EMAIL:-}
     volumes:
       - vscode-tunnel-state:/home/coder/.vscode-cli
       - claude-code-state:/home/coder/.claude
       - codex-state:/home/coder/.codex
+      # Whole XDG config dir — persists gh auth (~/.config/gh), and any other
+      # tool config/credentials written under ~/.config across recreations.
+      - config-state:/home/coder/.config
       - ${WORKSPACE:-.}:/workspace
+      # Docker-outside-of-Docker: share the host daemon so `docker` / `docker
+      # build` work inside the tunnel. The image entrypoint re-owns this socket
+      # for the coder user, so no sudo and no group_add are needed. Remove this
+      # line if you don't want the container to reach the host docker daemon.
+      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   vscode-tunnel-state:
   claude-code-state:
   codex-state:
+  config-state:
