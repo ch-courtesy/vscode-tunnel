@@ -1,37 +1,105 @@
-# Example: extend vscode-tunnel with Claude Code and Codex CLIs (native installers).
+# Example: extend vscode-tunnel with Claude Code and Codex CLIs (native installers),
+# plus a general dev toolchain (gh, node, uv, jq, ripgrep, fzf, ...).
 #
 # Build:
 #   docker build -f examples/Dockerfile.with-agents \
 #     -t vscode-tunnel-agents:1.121.0 .
 #
-# Run (note the extra volumes for ~/.claude and ~/.codex state):
+# Run (note the extra volumes for ~/.claude and ~/.codex state; the docker.sock
+# mount is optional — only add it if you want Docker-outside-of-Docker):
 #   docker run -d --name vscode-tunnel \
 #     -v vscode-tunnel-state:/home/coder/.vscode-cli \
 #     -v claude-code-state:/home/coder/.claude \
 #     -v codex-state:/home/coder/.codex \
+#     -v /var/run/docker.sock:/var/run/docker.sock \
 #     -v "$PWD":/workspace \
 #     vscode-tunnel-agents:1.121.0
 #
 # Inside the tunneled VS Code terminal:
-#   claude /login    # one-time OAuth, persisted in the claude-code-state volume
-#   codex login      # one-time OAuth, persisted in the codex-state volume
+#   claude /login      # one-time OAuth, persisted in the claude-code-state volume
+#   codex login        # one-time OAuth, persisted in the codex-state volume
+#   docker ps          # DooD: works WITHOUT sudo — entrypoint re-owns the socket
 
 ARG VSCODE_TUNNEL_IMAGE=ghcr.io/ch-courtesy/vscode-tunnel:1.121.0
 FROM ${VSCODE_TUNNEL_IMAGE}
 
 USER root
 
-# curl for the native installer. The runtime image ships ca-certificates but
-# not curl. No Node.js is needed: the installer drops the same standalone
-# binary that npm would, and the claude binary does not invoke Node at runtime.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
+# Use bash with pipefail so the `curl ... | bash` repo-setup pipes below fail
+# loudly if the download breaks (default sh would mask curl's exit code).
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Seed agent state dirs with tight perms; mounted volumes override these,
-# but the defaults matter when no volume is supplied.
+# Dev toolchain. The runtime image ships ca-certificates + git but not curl,
+# so we add curl/wget first (also needed by the native agent installers below),
+# then the everyday CLI tools, sudo, gh (GitHub apt repo), Node.js LTS
+# (NodeSource) and the Docker CLI (download.docker.com).
+#
+# Note on the agents: the claude/codex installers below drop standalone binaries
+# and do NOT need Node at runtime. Node here is for general dev use (npm/npx,
+# project tooling), not for the agents.
+#
+# Docker is "Docker-outside-of-Docker" (DooD): we install only the CLI +
+# compose/buildx plugins (no dockerd). At runtime mount the host daemon socket
+# (-v /var/run/docker.sock:/var/run/docker.sock). The mounted socket is owned by
+# the host's docker group, which `coder` isn't in — so the dood-entrypoint added
+# below re-owns it to the coder group at startup (one-time, via passwordless
+# sudo), after which `docker ...` works WITHOUT a sudo prefix (also for tools
+# like the VS Code Docker extension). Note: mounting the socket already grants
+# host-root-equivalent access, so adding sudo here is not a meaningful extra
+# exposure. Do NOT mount the socket if you don't want that.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates curl wget gnupg sudo \
+        jq ripgrep fzf less unzip zip; \
+    # --- passwordless sudo for the coder user --- \
+    echo 'coder ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/coder; \
+    chmod 0440 /etc/sudoers.d/coder; \
+    # --- GitHub CLI (gh): official apt repo + signed keyring --- \
+    install -m 0755 -d /etc/apt/keyrings; \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
+    chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list; \
+    # --- Docker CLI (DooD): official apt repo, CLI + plugins only (no daemon) --- \
+    curl -fsSL https://download.docker.com/linux/debian/gpg \
+        -o /etc/apt/keyrings/docker.asc; \
+    chmod a+r /etc/apt/keyrings/docker.asc; \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+        > /etc/apt/sources.list.d/docker.list; \
+    # --- Node.js LTS: NodeSource repo (debian's nodejs is too old) --- \
+    curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        gh nodejs \
+        docker-ce-cli docker-compose-plugin docker-buildx-plugin; \
+    rm -rf /var/lib/apt/lists/*
+
+# Seed agent + config state dirs with tight perms. Pre-creating these as coder
+# matters for named volumes: Docker seeds an empty named volume from the image
+# path on first use and preserves its ownership, so a coder-owned dir here keeps
+# the mounted volume writable (otherwise it'd come up root-owned). ~/.config
+# holds gh auth (and other tool config), hence 0700.
 RUN install -d -m 0700 -o coder -g coder /home/coder/.claude \
- && install -d -m 0700 -o coder -g coder /home/coder/.codex
+ && install -d -m 0700 -o coder -g coder /home/coder/.codex \
+ && install -d -m 0700 -o coder -g coder /home/coder/.config
+
+# DooD bootstrap entrypoint (generated inline, no extra files). When the host
+# docker socket is mounted, it re-owns the socket to the coder group via
+# passwordless sudo so plain `docker ...` works, then execs the image's real
+# tunnel entrypoint. A missing socket is fine — docker just won't connect.
+RUN printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'sock=/var/run/docker.sock' \
+    'if [[ -S "$sock" ]]; then' \
+    '  sudo chgrp coder "$sock" 2>/dev/null || true' \
+    '  sudo chmod g+rw "$sock" 2>/dev/null || true' \
+    'fi' \
+    'exec /usr/local/bin/entrypoint.sh "$@"' \
+    > /usr/local/bin/dood-entrypoint.sh \
+ && chmod 0755 /usr/local/bin/dood-entrypoint.sh
 
 # Install as the coder user so binaries land in /home/coder/.local/bin
 # (both installers target $HOME/.local). Latest channel; background
@@ -55,5 +123,24 @@ RUN set -eux; \
     mv "$HOME/.local/bin/codex-${target}" "$HOME/.local/bin/codex"; \
     chmod +x "$HOME/.local/bin/codex"
 
+# uv (Astral): the modern Python toolchain — replaces pip/venv/virtualenv/pyenv/
+# pipx, and installs standalone CPython on demand (`uv python install`). Lands in
+# ~/.local/bin like the agents above; UV_NO_MODIFY_PATH skips shell-profile edits
+# since PATH is set explicitly below. No system python3 needed.
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh
+
+# Use gh as git's credential helper for github.com, baked into coder's
+# ~/.gitconfig at build time. --force lets this run unauthenticated (no login
+# during build); it only writes the *helper directive*, pointing at the apt gh
+# (/usr/bin/gh). The actual token lives in ~/.config/gh after `gh auth login`,
+# which persists via the config volume — so git push/pull over HTTPS to github
+# just works with no separate ~/.git-credentials file.
+RUN gh auth setup-git --hostname github.com --force
+
 # Put the native install dir on PATH for the tunneled terminal.
 ENV PATH=/home/coder/.local/bin:$PATH
+
+# Override the base entrypoint with the DooD bootstrap; it fixes the docker
+# socket perms (if mounted) and then execs the original tunnel entrypoint.
+# tini stays PID 1 for proper signal/zombie handling.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/dood-entrypoint.sh"]
