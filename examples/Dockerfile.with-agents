@@ -76,6 +76,19 @@ RUN set -eux; \
         docker-ce-cli docker-compose-plugin docker-buildx-plugin; \
     rm -rf /var/lib/apt/lists/*
 
+# yq (mikefarah, Go) — the `yq eval` flavor for YAML/JSON, NOT debian's python
+# `yq`. Single static binary from GitHub releases, multi-arch. (No `--version`
+# check here so emulated cross-arch builds don't need to exec the binary.)
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) ya=amd64 ;; \
+      arm64) ya=arm64 ;; \
+      *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${ya}" \
+        -o /usr/local/bin/yq; \
+    chmod 0755 /usr/local/bin/yq
+
 # Seed agent + config state dirs with tight perms. Pre-creating these as coder
 # matters for named volumes: Docker seeds an empty named volume from the image
 # path on first use and preserves its ownership, so a coder-owned dir here keeps
