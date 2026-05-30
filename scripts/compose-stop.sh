@@ -23,4 +23,4 @@ for arg in "$@"; do
 done
 
 echo "==> docker compose down ${down_flags[*]:-}"
-docker compose down "${down_flags[@]}"
+docker compose down ${down_flags[@]+"${down_flags[@]}"}
