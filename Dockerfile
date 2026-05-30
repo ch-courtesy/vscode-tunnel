@@ -63,6 +63,7 @@ RUN apt-get update \
         openssh-client \
         locales \
         libsecret-1-0 \
+        procps \
         tini \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --shell /bin/bash --uid 1000 coder \
