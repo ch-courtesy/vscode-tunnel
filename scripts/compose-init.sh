@@ -10,19 +10,19 @@
 # Usage:
 #   scripts/compose-init.sh               # full first-time setup
 #   scripts/compose-init.sh --skip-auth   # build only, skip device-code login
-#   scripts/compose-init.sh --rebuild     # force rebuild even if image exists
+#   scripts/compose-init.sh --no-cache    # build with --no-cache (force full rebuild)
 
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 skip_auth=0
-rebuild=0
+no_cache=0
 
 for arg in "$@"; do
   case "$arg" in
     --skip-auth) skip_auth=1 ;;
-    --rebuild)   rebuild=1 ;;
+    --no-cache)  no_cache=1 ;;
     -h|--help)
       sed -n '2,13p' "$0"
       exit 0
@@ -48,16 +48,14 @@ else
   cp .env.example .env
 fi
 
-# 2. build
+# 2. build (always run; BuildKit caches unchanged layers)
 image_tag="$(grep -E '^IMAGE=' .env | tail -1 | cut -d= -f2- || true)"
 image_tag="${image_tag:-vscode-tunnel-claude:local}"
 
-if [ "$rebuild" -eq 1 ] || ! docker image inspect "$image_tag" >/dev/null 2>&1; then
-  echo "==> building image ($image_tag)"
-  docker compose build
-else
-  echo "==> image $image_tag already exists (use --rebuild to force)"
-fi
+build_args=()
+[ "$no_cache" -eq 1 ] && build_args+=(--no-cache)
+echo "==> building image ($image_tag)${no_cache:+ (no-cache)}"
+docker compose build ${build_args[@]+"${build_args[@]}"}
 
 # 3. device-code auth (must run with TTY); auto-skip if state volume non-empty
 project="${COMPOSE_PROJECT_NAME:-$(basename "$PWD" | tr '[:upper:]' '[:lower:]')}"
