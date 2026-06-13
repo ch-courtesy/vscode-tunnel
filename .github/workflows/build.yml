@@ -19,11 +19,6 @@ on:
       - .github/workflows/build.yml
       - scripts/**
   workflow_dispatch:
-    inputs:
-      push_latest:
-        description: 'Also push :latest tag'
-        required: false
-        default: 'false'
 
 permissions:
   contents: read
@@ -138,10 +133,7 @@ jobs:
           tags="${base}:${version},${base}:${version}-${short}"
           minor=${version%.*}
           major=${version%%.*}
-          tags="${tags},${base}:${minor},${base}:${major}"
-          if [[ "${{ github.event.inputs.push_latest }}" == 'true' ]]; then
-            tags="${tags},${base}:latest"
-          fi
+          tags="${tags},${base}:${minor},${base}:${major},${base}:latest"
           echo "tags=${tags}" >> "$GITHUB_OUTPUT"
 
       - name: Build multi-arch and push (non-PR only)
