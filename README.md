@@ -157,7 +157,7 @@ docker run -d --name vscode-tunnel \
 base 이미지는 의도적으로 lean하게 유지한다. 추가 도구는 **다운스트림 Dockerfile**로 본 이미지 위에 쌓는 패턴이 권장:
 
 ```dockerfile
-FROM ghcr.io/ch-courtesy/vscode-tunnel:1.121.0
+FROM ghcr.io/ch-courtesy/vscode-tunnel:1.124.2
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
  && npm install -g @anthropic-ai/claude-code \
@@ -175,7 +175,7 @@ USER coder
 
 직접 빌드:
 ```bash
-docker build -f examples/Dockerfile.with-claude-code -t vscode-tunnel-claude:1.121.0 .
+docker build -f examples/Dockerfile.with-claude-code -t vscode-tunnel-claude:1.124.2 .
 ```
 
 Compose로 한 번에 (권장 — 볼륨/재시작 정책까지 선언):
@@ -198,7 +198,7 @@ docker run -d --name vscode-tunnel \
   -v vscode-tunnel-state:/home/coder/.vscode-cli \
   -v claude-code-state:/home/coder/.claude \
   -v "$PWD":/workspace \
-  vscode-tunnel-claude:1.121.0
+  vscode-tunnel-claude:1.124.2
 ```
 
 최초 로그인: vscode.dev 터미널에서 `claude /login` 한 번 실행. 이후 볼륨 유지되는 한 재인증 불필요.
@@ -210,7 +210,7 @@ docker run -d --name vscode-tunnel \
 
 ## VS Code 버전 관리
 
-`versions.json`이 핀된 stable 릴리스를 정의한다. `.github/workflows/update-vscode.yml`이 매주 월요일 09:00 UTC에 upstream을 확인해 새 릴리스가 있으면 sha256을 핀된 commit에서 직접 계산해 PR을 자동으로 연다.
+`versions.json`이 핀된 stable 릴리스를 정의한다. `.github/workflows/update-vscode.yml`이 **매시간** upstream을 확인해 새 릴리스가 있으면 sha256을 핀된 commit에서 직접 계산해 PR을 자동으로 연다(머지는 수동). PR이 main에 머지되면 `build.yml`이 이미지를 빌드해 버전 태그(`<version>`, `<minor>`, `<major>`)와 함께 `:latest`로 GHCR에 푸시한다.
 
 Renovate(`renovate.json`)는 GitHub Actions/base 이미지 등 일반 의존성만 관리한다.
 
