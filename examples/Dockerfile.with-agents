@@ -20,7 +20,7 @@
 #   codex login        # one-time OAuth, persisted in the codex-state volume
 #   docker ps          # DooD: works WITHOUT sudo — entrypoint re-owns the socket
 
-ARG VSCODE_TUNNEL_IMAGE=ghcr.io/ch-courtesy/vscode-tunnel:1.121.0
+ARG VSCODE_TUNNEL_IMAGE=ghcr.io/ch-courtesy/vscode-tunnel:latest
 FROM ${VSCODE_TUNNEL_IMAGE}
 
 USER root
