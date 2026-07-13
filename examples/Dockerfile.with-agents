@@ -1,5 +1,6 @@
 # Example: extend vscode-tunnel with Claude Code and Codex CLIs (native installers),
-# plus a general dev toolchain (gh, node, uv, jq, ripgrep, fzf, ...).
+# the context-mode plugin for Claude Code, plus a general dev toolchain
+# (gh, node, uv, jq, ripgrep, fzf, ...).
 #
 # Build:
 #   docker build -f examples/Dockerfile.with-agents \
@@ -172,6 +173,17 @@ RUN cargo install --git https://github.com/rtk-ai/rtk
 # container.
 RUN rtk init -g --auto-patch \
  && rtk init -g --codex
+
+# context-mode (mksglu/context-mode): Claude Code plugin that sandboxes tool
+# output to save context-window tokens (MCP server + hooks + skills). Installed
+# non-interactively via the plugin marketplace CLI; lands in ~/.claude (user
+# scope), so it seeds the claude-code-state volume on first use. Same caveat
+# as rtk above: a pre-existing state volume masks this — in that case run
+# `claude plugin marketplace add mksglu/context-mode` and
+# `claude plugin install context-mode@context-mode` once inside the container.
+# The plugin's MCP server runs via the Node.js installed above.
+RUN claude plugin marketplace add mksglu/context-mode \
+ && claude plugin install context-mode@context-mode
 
 # Use gh as git's credential helper for github.com, baked into coder's
 # ~/.gitconfig at build time. --force lets this run unauthenticated (no login
