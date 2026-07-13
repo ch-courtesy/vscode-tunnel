@@ -169,39 +169,42 @@ USER coder
 
 | 파일 | 내용 |
 |---|---|
-| [`examples/Dockerfile.with-claude-code`](examples/Dockerfile.with-claude-code) | Claude Code CLI만 추가 |
-| [`examples/Dockerfile.with-tools`](examples/Dockerfile.with-tools) | Claude Code + gh + ripgrep/fzf/jq 등 dev toolchain |
-| [`examples/docker-compose.yml`](examples/docker-compose.yml) | 위 with-claude-code 빌드 + 볼륨/환경변수 일괄 관리 |
+| [`examples/Dockerfile.with-agents`](examples/Dockerfile.with-agents) | Claude Code + Codex CLI, dev toolchain(gh, node, uv, docker CLI(DooD), jq/ripgrep/fzf), cargo(rustup minimal — `cargo install`용), [rtk](https://github.com/rtk-ai/rtk)(토큰 절감 CLI 프록시, 두 에이전트에 자동 연동) |
+| [`docker-compose.yml`](docker-compose.yml) | 위 with-agents 빌드 + 볼륨/환경변수 일괄 관리 (레포 루트) |
 
 직접 빌드:
 ```bash
-docker build -f examples/Dockerfile.with-claude-code -t vscode-tunnel-claude:1.124.2 .
+docker build -f examples/Dockerfile.with-agents -t vscode-tunnel-agents:local .
 ```
 
-Compose로 한 번에 (권장 — 볼륨/재시작 정책까지 선언):
+Compose로 한 번에 (권장 — 볼륨/재시작 정책까지 선언, 레포 루트에서):
 ```bash
 # 첫 부팅: 인터랙티브로 device-code 로그인
-docker compose -f examples/docker-compose.yml run --rm -it tunnel
+docker compose run --rm -it tunnel
 # 인증 후 Ctrl+C, 곧바로 백그라운드 기동
-docker compose -f examples/docker-compose.yml up -d --build
-docker compose -f examples/docker-compose.yml logs -f
+docker compose up -d --build
+docker compose logs -f
 ```
 
 `TUNNEL_NAME`, `WORKSPACE` 등은 `.env` 파일로 오버라이드 가능. 자세한 옵션은 compose 파일의 상단 주석 참고.
 
-### Claude Code 상태 영속화
+### 에이전트 상태 영속화
 
-Claude Code는 `~/.claude/`에 OAuth 토큰/세션/설정을 저장한다. VS Code 인증과 마찬가지로 컨테이너 재생성을 견디려면 별도 볼륨이 필요:
+Claude Code는 `~/.claude/`, Codex는 `~/.codex/`, gh 인증은 `~/.config/`에 토큰/세션/설정을 저장한다. VS Code 인증과 마찬가지로 컨테이너 재생성을 견디려면 별도 볼륨이 필요 (compose 파일에는 이미 선언돼 있음):
 
 ```bash
 docker run -d --name vscode-tunnel \
   -v vscode-tunnel-state:/home/coder/.vscode-cli \
   -v claude-code-state:/home/coder/.claude \
+  -v codex-state:/home/coder/.codex \
+  -v config-state:/home/coder/.config \
   -v "$PWD":/workspace \
-  vscode-tunnel-claude:1.124.2
+  vscode-tunnel-agents:local
 ```
 
-최초 로그인: vscode.dev 터미널에서 `claude /login` 한 번 실행. 이후 볼륨 유지되는 한 재인증 불필요.
+최초 로그인: vscode.dev 터미널에서 `claude /login`, `codex login`, `gh auth login` 각 한 번 실행. 이후 볼륨 유지되는 한 재인증 불필요.
+
+rtk 연동 설정(`~/.claude`의 훅, `~/.codex`의 지시문)은 이미지에 구워져 있어 **새 볼륨에는 자동 시드**되지만, 이 이미지 이전에 만든 기존 볼륨을 재사용하면 가려진다 — 그 경우 컨테이너 안에서 `rtk init -g --auto-patch && rtk init -g --codex`를 한 번 실행.
 
 ### 보안 메모
 

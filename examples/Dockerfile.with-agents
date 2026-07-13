@@ -51,6 +51,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         ca-certificates curl wget gnupg sudo \
+        gcc libc6-dev \
         jq ripgrep fzf less unzip zip; \
     # --- passwordless sudo for the coder user --- \
     echo 'coder ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/coder; \
@@ -117,7 +118,11 @@ RUN printf '%s\n' \
 # Install as the coder user so binaries land in /home/coder/.local/bin
 # (both installers target $HOME/.local). Latest channel; background
 # auto-updates stay enabled and write to the coder-owned ~/.local dirs.
+# PATH is set here (not at the end) so later build steps can call the
+# just-installed tools (cargo, rtk) without absolute paths; it also serves
+# the tunneled terminal at runtime.
 ENV HOME=/home/coder
+ENV PATH=/home/coder/.local/bin:/home/coder/.cargo/bin:$PATH
 USER coder
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
@@ -142,6 +147,32 @@ RUN set -eux; \
 # since PATH is set explicitly below. No system python3 needed.
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh
 
+# Rust toolchain (rustup, minimal profile): here for `cargo install <tool>`
+# (e.g. rtk), not full Rust dev — rustc/cargo/rust-std only, no clippy/docs.
+# gcc above provides the linker cargo needs. --no-modify-path skips
+# shell-profile edits since PATH is set explicitly below (same as uv).
+RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path
+
+# rtk (rtk-ai/rtk): CLI proxy that compresses command output (git/cargo/npm/
+# grep/...) before it reaches the agent context window — 60-90% token savings.
+# MUST be installed from git: the crates.io `rtk` is an unrelated project
+# ("Rust Type Kit"). Built from source with the toolchain above; the binary
+# lands in ~/.cargo/bin (already on PATH).
+RUN cargo install --git https://github.com/rtk-ai/rtk
+
+# Wire rtk into both agents (non-interactive):
+#  - Claude Code: --auto-patch registers a PreToolUse hook in
+#    ~/.claude/settings.json (+ hook script and RTK.md) that transparently
+#    rewrites Bash commands to their rtk equivalents.
+#  - Codex: --codex adds RTK usage instructions to ~/.codex (AGENTS.md-style,
+#    no hook mechanism there).
+# These land in the ~/.claude / ~/.codex dirs that seed the named volumes on
+# first use. NOTE: a pre-existing state volume masks this — in that case run
+# `rtk init -g --auto-patch` (and `rtk init -g --codex`) once inside the
+# container.
+RUN rtk init -g --auto-patch \
+ && rtk init -g --codex
+
 # Use gh as git's credential helper for github.com, baked into coder's
 # ~/.gitconfig at build time. --force lets this run unauthenticated (no login
 # during build); it only writes the *helper directive*, pointing at the apt gh
@@ -149,9 +180,6 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh
 # which persists via the config volume — so git push/pull over HTTPS to github
 # just works with no separate ~/.git-credentials file.
 RUN gh auth setup-git --hostname github.com --force
-
-# Put the native install dir on PATH for the tunneled terminal.
-ENV PATH=/home/coder/.local/bin:$PATH
 
 # Override the base entrypoint with the DooD bootstrap; it fixes the docker
 # socket perms (if mounted) and then execs the original tunnel entrypoint.
