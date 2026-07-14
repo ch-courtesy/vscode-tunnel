@@ -20,6 +20,10 @@
 #   claude /login      # one-time OAuth, persisted in the claude-code-state volume
 #   codex login        # one-time OAuth, persisted in the codex-state volume
 #   docker ps          # DooD: works WITHOUT sudo — entrypoint re-owns the socket
+#
+# Code intelligence (codebase-memory-mcp, pre-wired into claude/codex):
+#   Say "Index this project" in claude/codex — graph lands in .codebase-memory/
+#   Graph UI: forward port 9749 in VS Code, then open http://localhost:9749
 
 ARG VSCODE_TUNNEL_IMAGE=ghcr.io/ch-courtesy/vscode-tunnel:latest
 FROM ${VSCODE_TUNNEL_IMAGE}
@@ -168,9 +172,9 @@ RUN cargo install --git https://github.com/rtk-ai/rtk
 #  - Codex: --codex adds RTK usage instructions to ~/.codex (AGENTS.md-style,
 #    no hook mechanism there).
 # These land in the ~/.claude / ~/.codex dirs that seed the named volumes on
-# first use. NOTE: a pre-existing state volume masks this — in that case run
-# `rtk init -g --auto-patch` (and `rtk init -g --codex`) once inside the
-# container.
+# first use. NOTE: a pre-existing state volume masks this (also true for the
+# codebase-memory-mcp files below) — in that case run `rtk init -g --auto-patch`
+# (and `rtk init -g --codex`) once inside the container.
 RUN rtk init -g --auto-patch \
  && rtk init -g --codex
 
@@ -184,6 +188,20 @@ RUN rtk init -g --auto-patch \
 # The plugin's MCP server runs via the Node.js installed above.
 RUN claude plugin marketplace add mksglu/context-mode \
  && claude plugin install context-mode@context-mode
+
+# codebase-memory-mcp (DeusData): code-intelligence MCP server — indexes the
+# repo into a persistent knowledge graph (158 languages, 14 MCP tools; graph
+# lives in <repo>/.codebase-memory/). --ui picks the variant with the embedded
+# 3D graph visualization. The installer drops a static binary in ~/.local/bin
+# and runs `codebase-memory-mcp install -y`, which wires MCP entries for the
+# agents detected above: Claude Code (~/.claude.json — baked into the image)
+# and Codex (~/.codex — seeds the named volume; same masking caveat as rtk,
+# re-run `codebase-memory-mcp install -y` inside the container if a
+# pre-existing volume hides it).
+# The graph UI auto-enables on the first MCP session and serves on
+# 127.0.0.1:9749 — loopback only, so `docker -p` can't publish it; use
+# VS Code port forwarding from the tunneled window instead.
+RUN curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash -s -- --ui
 
 # Use gh as git's credential helper for github.com, baked into coder's
 # ~/.gitconfig at build time. --force lets this run unauthenticated (no login
