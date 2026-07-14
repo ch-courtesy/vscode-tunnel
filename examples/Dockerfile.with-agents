@@ -127,6 +127,15 @@ ENV PATH=/home/coder/.local/bin:/home/coder/.cargo/bin:$PATH
 USER coder
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
+# Claude Code plugin: caveman (compressed output mode, ~65% fewer output
+# tokens). Registered/installed via the non-interactive `claude plugin` CLI —
+# same effect as `/plugin marketplace add` + `/plugin install` in a session.
+# Its hooks run via node (installed above). State lands in ~/.claude, so the
+# same volume-masking caveat as rtk below applies: with a pre-existing
+# claude-code-state volume, run these two commands once inside the container.
+RUN claude plugin marketplace add JuliusBrussee/caveman \
+ && claude plugin install caveman@caveman
+
 # Codex CLI: bypass install.sh (its SHA lookup is currently broken) and drop
 # the standalone musl binary straight into ~/.local/bin. Multi-arch aware.
 RUN set -eux; \
