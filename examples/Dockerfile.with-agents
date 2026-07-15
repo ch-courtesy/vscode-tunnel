@@ -131,15 +131,6 @@ ENV PATH=/home/coder/.local/bin:/home/coder/.cargo/bin:$PATH
 USER coder
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
-# Claude Code plugin: caveman (compressed output mode, ~65% fewer output
-# tokens). Registered/installed via the non-interactive `claude plugin` CLI —
-# same effect as `/plugin marketplace add` + `/plugin install` in a session.
-# Its hooks run via node (installed above). State lands in ~/.claude, so the
-# same volume-masking caveat as rtk below applies: with a pre-existing
-# claude-code-state volume, run these two commands once inside the container.
-RUN claude plugin marketplace add JuliusBrussee/caveman \
- && claude plugin install caveman@caveman
-
 # Codex CLI: bypass install.sh (its SHA lookup is currently broken) and drop
 # the standalone musl binary straight into ~/.local/bin. Multi-arch aware.
 RUN set -eux; \
@@ -187,17 +178,6 @@ RUN cargo install --git https://github.com/rtk-ai/rtk
 RUN rtk init -g --auto-patch \
  && rtk init -g --codex
 
-# context-mode (mksglu/context-mode): Claude Code plugin that sandboxes tool
-# output to save context-window tokens (MCP server + hooks + skills). Installed
-# non-interactively via the plugin marketplace CLI; lands in ~/.claude (user
-# scope), so it seeds the claude-code-state volume on first use. Same caveat
-# as rtk above: a pre-existing state volume masks this — in that case run
-# `claude plugin marketplace add mksglu/context-mode` and
-# `claude plugin install context-mode@context-mode` once inside the container.
-# The plugin's MCP server runs via the Node.js installed above.
-RUN claude plugin marketplace add mksglu/context-mode \
- && claude plugin install context-mode@context-mode
-
 # codebase-memory-mcp (DeusData): code-intelligence MCP server — indexes the
 # repo into a persistent knowledge graph (158 languages, 14 MCP tools; graph
 # lives in <repo>/.codebase-memory/). --ui picks the variant with the embedded
@@ -219,6 +199,26 @@ RUN curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/ma
 # which persists via the config volume — so git push/pull over HTTPS to github
 # just works with no separate ~/.git-credentials file.
 RUN gh auth setup-git --hostname github.com --force
+
+# context-mode (mksglu/context-mode): Claude Code plugin that sandboxes tool
+# output to save context-window tokens (MCP server + hooks + skills). Installed
+# non-interactively via the plugin marketplace CLI; lands in ~/.claude (user
+# scope), so it seeds the claude-code-state volume on first use. Same caveat
+# as rtk above: a pre-existing state volume masks this — in that case run
+# `claude plugin marketplace add mksglu/context-mode` and
+# `claude plugin install context-mode@context-mode` once inside the container.
+# The plugin's MCP server runs via the Node.js installed above.
+RUN claude plugin marketplace add mksglu/context-mode \
+ && claude plugin install context-mode@context-mode
+
+# Claude Code plugin: caveman (compressed output mode, ~65% fewer output
+# tokens). Registered/installed via the non-interactive `claude plugin` CLI —
+# same effect as `/plugin marketplace add` + `/plugin install` in a session.
+# Its hooks run via node (installed above). State lands in ~/.claude, so the
+# same volume-masking caveat as rtk below applies: with a pre-existing
+# claude-code-state volume, run these two commands once inside the container.
+RUN claude plugin marketplace add JuliusBrussee/caveman \
+ && claude plugin install caveman@caveman
 
 # Override the base entrypoint with the DooD bootstrap; it fixes the docker
 # socket perms (if mounted) and then execs the original tunnel entrypoint.
