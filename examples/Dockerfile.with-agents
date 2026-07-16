@@ -203,8 +203,12 @@ RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-to
 # grep/...) before it reaches the agent context window — 60-90% token savings.
 # MUST be installed from git: the crates.io `rtk` is an unrelated project
 # ("Rust Type Kit"). Built from source with the toolchain above; the binary
-# lands in ~/.cargo/bin (already on PATH).
-RUN cargo install --git https://github.com/rtk-ai/rtk
+# lands in ~/.cargo/bin (already on PATH). Also symlinked into ~/.local/bin:
+# tunneled sessions rebuild PATH from shell profiles, which keep ~/.local/bin
+# but drop the image's ENV PATH (and with it ~/.cargo/bin) — without the
+# symlink the rtk PreToolUse hook fails with "rtk: command not found".
+RUN cargo install --git https://github.com/rtk-ai/rtk \
+ && ln -s /home/coder/.cargo/bin/rtk /home/coder/.local/bin/rtk
 
 # Wire rtk into both agents (non-interactive):
 #  - Claude Code: --auto-patch registers a PreToolUse hook in
