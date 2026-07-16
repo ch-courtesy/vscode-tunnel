@@ -106,8 +106,9 @@ RUN install -d -m 0700 -o coder -g coder /home/coder/.claude \
 
 # DooD bootstrap entrypoint (generated inline, no extra files). When the host
 # docker socket is mounted, it re-owns the socket to the coder group via
-# passwordless sudo so plain `docker ...` works, then execs the image's real
-# tunnel entrypoint. A missing socket is fine — docker just won't connect.
+# passwordless sudo so plain `docker ...` works, then kicks off the agent-state
+# migration (below) in the background and execs the image's real tunnel
+# entrypoint. A missing socket is fine — docker just won't connect.
 RUN printf '%s\n' \
     '#!/usr/bin/env bash' \
     'set -euo pipefail' \
@@ -116,9 +117,49 @@ RUN printf '%s\n' \
     '  sudo chgrp coder "$sock" 2>/dev/null || true' \
     '  sudo chmod g+rw "$sock" 2>/dev/null || true' \
     'fi' \
+    '/usr/local/bin/agent-state-migrate.sh >> "$HOME/.claude/agent-state-migrate.log" 2>&1 &' \
     'exec /usr/local/bin/entrypoint.sh "$@"' \
     > /usr/local/bin/dood-entrypoint.sh \
  && chmod 0755 /usr/local/bin/dood-entrypoint.sh
+
+# Agent-state migration (generated inline, same style as above). The rtk hooks,
+# Claude Code plugins and codex MCP wiring installed later in this file live in
+# ~/.claude / ~/.codex. Docker only seeds those into a named volume when the
+# volume is EMPTY on first mount — a pre-existing state volume (e.g. one created
+# by an older image) masks whatever the new image baked in. This script re-checks
+# each item at container start and re-applies only what's missing, so upgrading
+# the image "just works" with existing volumes. Idempotent; network is only
+# needed when something actually has to be (re)installed, and failures are
+# logged (to ~/.claude/agent-state-migrate.log via the entrypoint) without
+# blocking startup.
+RUN printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -uo pipefail' \
+    'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"' \
+    'log() { printf "[agent-state-migrate] %s\n" "$*"; }' \
+    'log "start $(date -u +%Y-%m-%dT%H:%M:%SZ)"' \
+    '# rtk: hook for Claude Code + instructions for Codex' \
+    'if command -v rtk >/dev/null 2>&1; then' \
+    '  [[ -f "$HOME/.claude/RTK.md" ]] || { log "rtk: wiring Claude Code"; rtk init -g --auto-patch || log "WARN: rtk --auto-patch failed"; }' \
+    '  [[ -f "$HOME/.codex/RTK.md" ]]  || { log "rtk: wiring Codex";       rtk init -g --codex      || log "WARN: rtk --codex failed"; }' \
+    'fi' \
+    '# Claude Code plugins (marketplace add is a no-op if already registered)' \
+    'ensure_plugin() {' \
+    '  grep -qs "\"$2\"" "$HOME/.claude/plugins/installed_plugins.json" && return 0' \
+    '  log "plugin: installing $2"' \
+    '  claude plugin marketplace add "$1" >/dev/null 2>&1 || true' \
+    '  claude plugin install "$2" || log "WARN: plugin $2 install failed"' \
+    '}' \
+    'ensure_plugin mksglu/context-mode context-mode@context-mode' \
+    'ensure_plugin JuliusBrussee/caveman caveman@caveman' \
+    '# codebase-memory-mcp: codex-side wiring lives in the ~/.codex volume' \
+    'if command -v codebase-memory-mcp >/dev/null 2>&1 && ! grep -qs "^\[mcp_servers\.codebase-memory-mcp\]" "$HOME/.codex/config.toml"; then' \
+    '  log "codebase-memory-mcp: re-wiring agents"' \
+    '  codebase-memory-mcp install -y || log "WARN: codebase-memory-mcp install failed"' \
+    'fi' \
+    'log "done"' \
+    > /usr/local/bin/agent-state-migrate.sh \
+ && chmod 0755 /usr/local/bin/agent-state-migrate.sh
 
 # Install as the coder user so binaries land in /home/coder/.local/bin
 # (both installers target $HOME/.local). Latest channel; background
@@ -173,8 +214,8 @@ RUN cargo install --git https://github.com/rtk-ai/rtk
 #    no hook mechanism there).
 # These land in the ~/.claude / ~/.codex dirs that seed the named volumes on
 # first use. NOTE: a pre-existing state volume masks this (also true for the
-# codebase-memory-mcp files below) — in that case run `rtk init -g --auto-patch`
-# (and `rtk init -g --codex`) once inside the container.
+# codebase-memory-mcp files and plugins below) — the agent-state-migrate
+# entrypoint hook above detects that at container start and re-applies it.
 RUN rtk init -g --auto-patch \
  && rtk init -g --codex
 
@@ -185,8 +226,7 @@ RUN rtk init -g --auto-patch \
 # and runs `codebase-memory-mcp install -y`, which wires MCP entries for the
 # agents detected above: Claude Code (~/.claude.json — baked into the image)
 # and Codex (~/.codex — seeds the named volume; same masking caveat as rtk,
-# re-run `codebase-memory-mcp install -y` inside the container if a
-# pre-existing volume hides it).
+# auto-repaired at startup by agent-state-migrate).
 # The graph UI auto-enables on the first MCP session and serves on
 # 127.0.0.1:9749 — loopback only, so `docker -p` can't publish it; use
 # VS Code port forwarding from the tunneled window instead.
@@ -204,9 +244,8 @@ RUN gh auth setup-git --hostname github.com --force
 # output to save context-window tokens (MCP server + hooks + skills). Installed
 # non-interactively via the plugin marketplace CLI; lands in ~/.claude (user
 # scope), so it seeds the claude-code-state volume on first use. Same caveat
-# as rtk above: a pre-existing state volume masks this — in that case run
-# `claude plugin marketplace add mksglu/context-mode` and
-# `claude plugin install context-mode@context-mode` once inside the container.
+# as rtk above: a pre-existing state volume masks this — auto-repaired at
+# startup by agent-state-migrate.
 # The plugin's MCP server runs via the Node.js installed above.
 RUN claude plugin marketplace add mksglu/context-mode \
  && claude plugin install context-mode@context-mode
@@ -215,12 +254,13 @@ RUN claude plugin marketplace add mksglu/context-mode \
 # tokens). Registered/installed via the non-interactive `claude plugin` CLI —
 # same effect as `/plugin marketplace add` + `/plugin install` in a session.
 # Its hooks run via node (installed above). State lands in ~/.claude, so the
-# same volume-masking caveat as rtk below applies: with a pre-existing
-# claude-code-state volume, run these two commands once inside the container.
+# same volume-masking caveat as rtk above applies — auto-repaired at startup
+# by agent-state-migrate.
 RUN claude plugin marketplace add JuliusBrussee/caveman \
  && claude plugin install caveman@caveman
 
 # Override the base entrypoint with the DooD bootstrap; it fixes the docker
-# socket perms (if mounted) and then execs the original tunnel entrypoint.
-# tini stays PID 1 for proper signal/zombie handling.
+# socket perms (if mounted), runs the agent-state migration in the background,
+# and then execs the original tunnel entrypoint. tini stays PID 1 for proper
+# signal/zombie handling.
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/dood-entrypoint.sh"]
