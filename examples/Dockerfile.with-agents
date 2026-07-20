@@ -138,6 +138,24 @@ RUN printf '%s\n' \
     'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"' \
     'log() { printf "[agent-state-migrate] %s\n" "$*"; }' \
     'log "start $(date -u +%Y-%m-%dT%H:%M:%SZ)"' \
+    '# .claude.json lives in the volume via CLAUDE_CONFIG_DIR; a pre-existing' \
+    '# volume masks the image copy, so seed it from the snapshot when missing' \
+    'if [[ ! -f "$HOME/.claude/.claude.json" && -f /usr/local/share/claude-seed/claude.json ]]; then' \
+    '  log "seeding .claude.json into claude-code-state volume"' \
+    '  install -m 0600 /usr/local/share/claude-seed/claude.json "$HOME/.claude/.claude.json"' \
+    'fi' \
+    '# fold any legacy ~/.claude.json (tool that ignored CLAUDE_CONFIG_DIR)' \
+    '# into the volume-backed file so it is not lost on recreation' \
+    'if [[ -f "$HOME/.claude.json" ]]; then' \
+    '  log "merging legacy ~/.claude.json into volume"' \
+    '  if [[ -f "$HOME/.claude/.claude.json" ]]; then' \
+    '    jq -s ".[0] * .[1]" "$HOME/.claude/.claude.json" "$HOME/.claude.json" > "$HOME/.claude/.claude.json.tmp" \' \
+    '      && mv "$HOME/.claude/.claude.json.tmp" "$HOME/.claude/.claude.json" || log "WARN: legacy merge failed"' \
+    '  else' \
+    '    cp "$HOME/.claude.json" "$HOME/.claude/.claude.json"' \
+    '  fi' \
+    '  rm -f "$HOME/.claude.json"' \
+    'fi' \
     '# rtk: hook for Claude Code + instructions for Codex' \
     'if command -v rtk >/dev/null 2>&1; then' \
     '  [[ -f "$HOME/.claude/RTK.md" ]] || { log "rtk: wiring Claude Code"; rtk init -g --auto-patch || log "WARN: rtk --auto-patch failed"; }' \
@@ -169,6 +187,13 @@ RUN printf '%s\n' \
 # the tunneled terminal at runtime.
 ENV HOME=/home/coder
 ENV PATH=/home/coder/.local/bin:/home/coder/.cargo/bin:$PATH
+# Keep Claude Code's top-level config (.claude.json — OAuth account, onboarding
+# state, MCP wiring) inside ~/.claude so it lands in the claude-code-state
+# volume. The default location is ~/.claude.json on the container filesystem,
+# which is reset to the image's baked copy on every container recreation —
+# wiping login state even though the token in ~/.claude/.credentials.json
+# survives. With this env the file lives at ~/.claude/.claude.json instead.
+ENV CLAUDE_CONFIG_DIR=/home/coder/.claude
 USER coder
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
@@ -228,13 +253,28 @@ RUN rtk init -g --auto-patch \
 # lives in <repo>/.codebase-memory/). --ui picks the variant with the embedded
 # 3D graph visualization. The installer drops a static binary in ~/.local/bin
 # and runs `codebase-memory-mcp install -y`, which wires MCP entries for the
-# agents detected above: Claude Code (~/.claude.json — baked into the image)
-# and Codex (~/.codex — seeds the named volume; same masking caveat as rtk,
-# auto-repaired at startup by agent-state-migrate).
+# agents detected above: Claude Code (.claude.json) and Codex (~/.codex —
+# seeds the named volume; same masking caveat as rtk, auto-repaired at
+# startup by agent-state-migrate).
 # The graph UI auto-enables on the first MCP session and serves on
 # 127.0.0.1:9749 — loopback only, so `docker -p` can't publish it; use
 # VS Code port forwarding from the tunneled window instead.
 RUN curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash -s -- --ui
+
+# The installer above may not honor CLAUDE_CONFIG_DIR and write its Claude Code
+# MCP wiring to the legacy ~/.claude.json path. Fold any such file into the
+# volume-backed location so nothing configured at build time lives outside
+# ~/.claude (later keys win on conflict — legacy file is the newer write here).
+RUN if [ -f "$HOME/.claude.json" ]; then \
+      if [ -f "$HOME/.claude/.claude.json" ]; then \
+        jq -s '.[0] * .[1]' "$HOME/.claude/.claude.json" "$HOME/.claude.json" \
+          > "$HOME/.claude/.claude.json.tmp" \
+        && mv "$HOME/.claude/.claude.json.tmp" "$HOME/.claude/.claude.json"; \
+      else \
+        cp "$HOME/.claude.json" "$HOME/.claude/.claude.json"; \
+      fi; \
+      rm -f "$HOME/.claude.json"; \
+    fi
 
 # Use gh as git's credential helper for github.com, baked into coder's
 # ~/.gitconfig at build time. --force lets this run unauthenticated (no login
@@ -262,6 +302,14 @@ RUN claude plugin marketplace add mksglu/context-mode \
 # by agent-state-migrate.
 RUN claude plugin marketplace add JuliusBrussee/caveman \
  && claude plugin install caveman@caveman
+
+# Snapshot the fully-wired .claude.json outside the volume mount path. A
+# pre-existing claude-code-state volume masks ~/.claude at runtime, so
+# agent-state-migrate seeds this copy into the volume when the file is missing
+# there (fresh volumes get it via Docker's normal empty-volume seeding). Built
+# unauthenticated, so it holds plugin/MCP config only — no secrets.
+RUN sudo install -D -m 0644 -o root -g root \
+      "$HOME/.claude/.claude.json" /usr/local/share/claude-seed/claude.json
 
 # Override the base entrypoint with the DooD bootstrap; it fixes the docker
 # socket perms (if mounted), runs the agent-state migration in the background,
