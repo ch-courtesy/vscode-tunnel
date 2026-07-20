@@ -157,6 +157,18 @@ RUN printf '%s\n' \
     '  log "codebase-memory-mcp: re-wiring agents"' \
     '  codebase-memory-mcp install -y || log "WARN: codebase-memory-mcp install failed"' \
     'fi' \
+    '# vscode server: agent host imports @vscode/fs-copyfile from the server root,' \
+    '# but broken packaging (microsoft/vscode#326016, <=1.129.x) ships it only under' \
+    '# extensions/git. Copy it up so the Agents window can connect (503 otherwise).' \
+    '# Self-limiting: once a fixed server ships the module at the root, -d dst skips.' \
+    'for srv in "${VSCODE_CLI_DATA_DIR:-$HOME/.vscode-cli}"/servers/*/server; do' \
+    '  src="$srv/extensions/git/node_modules/@vscode/fs-copyfile"' \
+    '  dst="$srv/node_modules/@vscode/fs-copyfile"' \
+    '  if [[ -d "$src" && ! -d "$dst" ]]; then' \
+    '    log "vscode-server: patching fs-copyfile into $(basename "$(dirname "$srv")")"' \
+    '    cp -r "$src" "$dst" || log "WARN: fs-copyfile patch failed"' \
+    '  fi' \
+    'done' \
     'log "done"' \
     > /usr/local/bin/agent-state-migrate.sh \
  && chmod 0755 /usr/local/bin/agent-state-migrate.sh
