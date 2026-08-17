@@ -34,6 +34,7 @@ jobs:
           fi
 
       - name: Create Pull Request
+        id: cpr
         if: steps.update.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
@@ -51,3 +52,29 @@ jobs:
           labels: |
             dependencies
             vscode-update
+
+      # Auto-merge is server-side: GitHub holds the merge until the required
+      # status checks on main (lint, build) pass. It does not merge early even
+      # with an admin PAT, so this is the actual gate.
+      - name: Enable auto-merge
+        if: steps.cpr.outputs.pull-request-number
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: gh pr merge --squash --auto '${{ steps.cpr.outputs.pull-request-number }}'
+
+      # Watching only reports: it fails this run so a check failure is visible
+      # instead of leaving a silently stalled PR. The merge decision stays with
+      # auto-merge above.
+      - name: Report check results
+        if: steps.cpr.outputs.pull-request-number
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          pr='${{ steps.cpr.outputs.pull-request-number }}'
+          # Checks register a few seconds after the PR opens; without this wait
+          # `gh pr checks` reports "no checks" and exits before they appear.
+          for _ in $(seq 30); do
+            if gh pr checks "$pr" >/dev/null 2>&1; then break; fi
+            sleep 5
+          done
+          gh pr checks "$pr" --watch --fail-fast
