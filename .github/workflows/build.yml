@@ -10,14 +10,9 @@ on:
       - .dockerignore
       - .github/workflows/build.yml
       - scripts/**
+  # No paths filter: lint/build are required status checks on main, so every PR
+  # must report them or it blocks forever waiting for a run that never starts.
   pull_request:
-    paths:
-      - Dockerfile
-      - entrypoint.sh
-      - versions.json
-      - .dockerignore
-      - .github/workflows/build.yml
-      - scripts/**
   workflow_dispatch:
 
 permissions:
