@@ -1,10 +1,10 @@
 {
   "stable": {
-    "version": "1.145.3",
-    "commit": "dcd3ad6e368fbe19d03f37054a40dbaf40d676f4",
+    "version": "1.146.0",
+    "commit": "69047191fc427f2f92828279aae1d90d8eeda7ab",
     "sha256": {
-      "x64": "9e1ca71f9d17adc98731aa4b9f72b5af6254e7936042f1e9414f27babbdf89e1",
-      "arm64": "bf142a5f521bfbf382956c74a3f5eea17002e77673db2b5ec7fb35b18c6e2da6"
+      "x64": "f6240bd0d53e7e1ae7bff206221b7aa2ce28f7ffa9a9197289957b32a41368a0",
+      "arm64": "a20c90d3b048396508ba8ddd2532413e1c2e67ba2adb659d2b1cd100d0cefe3a"
     }
   }
 }
